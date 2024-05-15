@@ -25,7 +25,9 @@ target_link_libraries(ledger_core PUBLIC ledger_warnings)
 
 # ---- sql --------------------------------------------------------------------
 add_library(ledger_sql
+  src/sql/ast.cpp
   src/sql/lexer.cpp
+  src/sql/parser.cpp
 )
 target_link_libraries(ledger_sql PUBLIC ledger_core)
 
@@ -37,6 +39,7 @@ add_executable(ledger_tests
   tests/test_result.cpp
   tests/test_value.cpp
   tests/test_lexer.cpp
+  tests/test_parser.cpp
 )
 target_include_directories(ledger_tests PRIVATE third_party)
 target_link_libraries(ledger_tests PRIVATE ledger_core ledger_sql)
