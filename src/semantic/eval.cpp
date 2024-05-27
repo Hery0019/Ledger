@@ -1,0 +1,190 @@
+#include "semantic/eval.h"
+
+#include <cstdint>
+#include <limits>
+#include <string>
+
+namespace ledger {
+
+namespace {
+
+using ast::BinaryOp;
+using ast::UnaryOp;
+
+constexpr auto kIntMin = std::numeric_limits<std::int64_t>::min();
+constexpr auto kIntMax = std::numeric_limits<std::int64_t>::max();
+
+Error overflow(std::string_view op) {
+    return makeError(ErrorCode::TypeError, "integer overflow in '" + std::string(op) + "'");
+}
+
+Error divisionByZero() { return makeError(ErrorCode::TypeError, "division by zero"); }
+
+double toDouble(const Value& v) noexcept {
+    return v.type() == DataType::Int ? static_cast<double>(v.asInt()) : v.asFloat();
+}
+
+// Arithmétique entière vérifiée. Portable (pas de __builtin_*_overflow) : les
+// bornes sont testées avant l'opération, jamais après un wrap.
+Result<Value> intArith(BinaryOp op, std::int64_t a, std::int64_t b) {
+    switch (op) {
+        case BinaryOp::Add:
+            if ((b > 0 && a > kIntMax - b) || (b < 0 && a < kIntMin - b)) return overflow("+");
+            return Value::integer(a + b);
+        case BinaryOp::Sub:
+            if ((b < 0 && a > kIntMax + b) || (b > 0 && a < kIntMin + b)) return overflow("-");
+            return Value::integer(a - b);
+        case BinaryOp::Div:
+            if (b == 0) return divisionByZero();
+            if (a == kIntMin && b == -1) return overflow("/");
+            return Value::integer(a / b);  // troncature vers zéro, comme SQL
+        default:
+            return makeError(ErrorCode::Internal, "intArith: not an arithmetic operator");
+    }
+}
+
+Result<Value> floatArith(BinaryOp op, double a, double b) {
+    switch (op) {
+        case BinaryOp::Add: return Value::real(a + b);
+        case BinaryOp::Sub: return Value::real(a - b);
+        case BinaryOp::Mul: return Value::real(a * b);
+        case BinaryOp::Div:
+            if (b == 0.0) return divisionByZero();
+            return Value::real(a / b);
+        default:
+            return makeError(ErrorCode::Internal, "floatArith: not an arithmetic operator");
+    }
+}
+
+// Multiplication : on passe par unsigned (wrap défini) puis on vérifie par
+// division inverse ; un `a * b` signé qui déborde serait un UB.
+Result<Value> checkedMul(std::int64_t a, std::int64_t b) {
+    if (a == 0 || b == 0) return Value::integer(0);
+    if ((a == -1 && b == kIntMin) || (b == -1 && a == kIntMin)) return overflow("*");
+    const auto ua = static_cast<std::uint64_t>(a);
+    const auto ub = static_cast<std::uint64_t>(b);
+    const std::uint64_t ur = ua * ub;  // wrap défini pour unsigned
+    const auto r = static_cast<std::int64_t>(ur);
+    if (r / b != a) return overflow("*");
+    return Value::integer(r);
+}
+
+bool comparisonHolds(BinaryOp op, Ordering ord) noexcept {
+    switch (op) {
+        case BinaryOp::Eq:    return ord == Ordering::Equal;
+        case BinaryOp::NotEq: return ord != Ordering::Equal;
+        case BinaryOp::Lt:    return ord == Ordering::Less;
+        case BinaryOp::LtEq:  return ord != Ordering::Greater;
+        case BinaryOp::Gt:    return ord == Ordering::Greater;
+        case BinaryOp::GtEq:  return ord != Ordering::Less;
+        default:              return false;
+    }
+}
+
+bool isComparison(BinaryOp op) noexcept {
+    return op == BinaryOp::Eq || op == BinaryOp::NotEq || op == BinaryOp::Lt ||
+           op == BinaryOp::LtEq || op == BinaryOp::Gt || op == BinaryOp::GtEq;
+}
+
+Result<Value> evalUnary(const BoundUnary& u, const Row& row) {
+    LEDGER_TRY(v, eval(*u.operand, row));
+    if (v.isNull()) return Value::null();
+    switch (u.op) {
+        case UnaryOp::Not:
+            return Value::boolean(!v.asBool());
+        case UnaryOp::Neg:
+            if (v.type() == DataType::Int) {
+                if (v.asInt() == kIntMin) return overflow("-");
+                return Value::integer(-v.asInt());
+            }
+            return Value::real(-v.asFloat());
+    }
+    return makeError(ErrorCode::Internal, "evalUnary: unknown operator");
+}
+
+Result<Value> evalLogical(BinaryOp op, const BoundBinary& b, const Row& row) {
+    LEDGER_TRY(l, eval(*b.lhs, row));
+    LEDGER_TRY(r, eval(*b.rhs, row));
+    // Logique à trois états. On évalue les deux côtés : pas de court-circuit,
+    // pour qu'une erreur de données (division par zéro) ne dépende pas de
+    // l'ordre des opérandes.
+    const bool lNull = l.isNull();
+    const bool rNull = r.isNull();
+    if (op == BinaryOp::And) {
+        if ((!lNull && !l.asBool()) || (!rNull && !r.asBool())) return Value::boolean(false);
+        if (lNull || rNull) return Value::null();
+        return Value::boolean(true);
+    }
+    if ((!lNull && l.asBool()) || (!rNull && r.asBool())) return Value::boolean(true);
+    if (lNull || rNull) return Value::null();
+    return Value::boolean(false);
+}
+
+Result<Value> evalBinary(const BoundBinary& b, const Row& row) {
+    if (b.op == BinaryOp::And || b.op == BinaryOp::Or) return evalLogical(b.op, b, row);
+
+    LEDGER_TRY(l, eval(*b.lhs, row));
+    LEDGER_TRY(r, eval(*b.rhs, row));
+    if (l.isNull() || r.isNull()) return Value::null();
+
+    if (isComparison(b.op)) {
+        LEDGER_TRY(ord, Value::compare(l, r));
+        return Value::boolean(comparisonHolds(b.op, ord));
+    }
+
+    if (l.type() == DataType::Int && r.type() == DataType::Int) {
+        if (b.op == BinaryOp::Mul) return checkedMul(l.asInt(), r.asInt());
+        return intArith(b.op, l.asInt(), r.asInt());
+    }
+    return floatArith(b.op, toDouble(l), toDouble(r));
+}
+
+Result<Value> evalCast(const BoundCast& c, const Row& row) {
+    LEDGER_TRY(v, eval(*c.operand, row));
+    if (v.isNull() || v.type() == c.to) return v;
+    // Seule conversion admise : Int -> Float.
+    return Value::real(static_cast<double>(v.asInt()));
+}
+
+}  // namespace
+
+Result<Value> eval(const BoundExpr& expr, const Row& row) {
+    return std::visit(
+        [&](const auto& n) -> Result<Value> {
+            using N = std::decay_t<decltype(n)>;
+            if constexpr (std::is_same_v<N, Value>) {
+                return n;
+            } else if constexpr (std::is_same_v<N, BoundColumn>) {
+                return row[n.index];
+            } else if constexpr (std::is_same_v<N, BoundUnary>) {
+                return evalUnary(n, row);
+            } else if constexpr (std::is_same_v<N, BoundBinary>) {
+                return evalBinary(n, row);
+            } else if constexpr (std::is_same_v<N, BoundIsNull>) {
+                LEDGER_TRY(v, eval(*n.operand, row));
+                return Value::boolean(v.isNull() != n.negated);
+            } else {
+                return evalCast(n, row);
+            }
+        },
+        expr.node);
+}
+
+bool isConstant(const BoundExpr& expr) noexcept {
+    return std::visit(
+        [](const auto& n) -> bool {
+            using N = std::decay_t<decltype(n)>;
+            if constexpr (std::is_same_v<N, Value>) {
+                return true;
+            } else if constexpr (std::is_same_v<N, BoundColumn>) {
+                return false;
+            } else if constexpr (std::is_same_v<N, BoundBinary>) {
+                return isConstant(*n.lhs) && isConstant(*n.rhs);
+            } else {
+                return isConstant(*n.operand);
+            }
+        },
+        expr.node);
+}
+
+}  // namespace ledger
