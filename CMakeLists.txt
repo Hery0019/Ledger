@@ -39,6 +39,14 @@ add_library(ledger_semantic
 )
 target_link_libraries(ledger_semantic PUBLIC ledger_sql)
 
+# ---- storage ----------------------------------------------------------------
+add_library(ledger_storage
+  src/storage/codec.cpp
+  src/storage/file_engine.cpp
+  src/storage/memory_engine.cpp
+)
+target_link_libraries(ledger_storage PUBLIC ledger_core)
+
 # ---- tests ------------------------------------------------------------------
 enable_testing()
 
@@ -51,7 +59,10 @@ add_executable(ledger_tests
   tests/test_catalog.cpp
   tests/test_eval.cpp
   tests/test_binder.cpp
+  tests/test_codec.cpp
+  tests/test_memory_engine.cpp
+  tests/test_file_engine.cpp
 )
 target_include_directories(ledger_tests PRIVATE third_party)
-target_link_libraries(ledger_tests PRIVATE ledger_core ledger_sql ledger_semantic)
+target_link_libraries(ledger_tests PRIVATE ledger_core ledger_sql ledger_semantic ledger_storage)
 add_test(NAME ledger_tests COMMAND ledger_tests)
