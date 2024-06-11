@@ -1,32 +1,16 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
 #include <map>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "core/result.h"
-#include "core/value.h"
+#include "core/schema.h"
 
 namespace ledger {
-
-struct ColumnSchema {
-    std::string name;  // minuscules
-    DataType type;     // jamais DataType::Null
-    bool primaryKey;
-    bool notNull;      // toujours true si primaryKey
-};
-
-struct TableSchema {
-    std::string name;  // minuscules
-    std::vector<ColumnSchema> columns;  // jamais vide
-
-    [[nodiscard]] std::optional<std::size_t> columnIndex(std::string_view column) const noexcept;
-    // Index de la colonne PRIMARY KEY, s'il y en a une (au plus une par table).
-    [[nodiscard]] std::optional<std::size_t> primaryKeyIndex() const noexcept;
-};
 
 // Ensemble des schémas connus. En mémoire, mono-processus : la couche stockage
 // le remplit au démarrage (lecture des schema.txt) et le tient à jour après
