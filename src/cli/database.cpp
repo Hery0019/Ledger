@@ -65,6 +65,9 @@ bool isEmptyStatement(std::string_view s) {
 
 std::vector<ScriptStatement> splitStatements(std::string_view text) {
     std::vector<ScriptStatement> out;
+    // BOM UTF-8 en tête : le Bloc-notes et PowerShell en ajoutent un ; ce
+    // n'est pas du SQL.
+    if (text.starts_with("\xEF\xBB\xBF")) text.remove_prefix(3);
     std::size_t start = 0;
 
     // Ajoute text[start, end) s'il contient une instruction ; sa ligne est

@@ -40,6 +40,7 @@ private:
 // Découpe un texte en instructions sur les `;` situés hors chaîne '...' et
 // hors commentaire `--`. Le `;` n'est pas conservé. Les instructions vides
 // (blancs / commentaires seuls) sont omises. Un `;` final est facultatif.
+// Un BOM UTF-8 en tête de texte est ignoré.
 //
 // `sql` commence au premier caractère utile (blancs et commentaires de tête
 // retirés), `line` est sa ligne (1-based) dans le texte d'origine : une
