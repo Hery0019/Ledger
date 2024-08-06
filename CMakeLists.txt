@@ -61,8 +61,8 @@ target_link_libraries(ledger_cli PUBLIC ledger_exec)
 
 add_executable(ledger src/cli/main.cpp)
 target_link_libraries(ledger PRIVATE ledger_cli)
-# Runtime C++ lié statiquement : l'exécutable doit tourner hors de
-# l'environnement MinGW (sinon libstdc++-6.dll introuvable depuis PowerShell).
+# C++ runtime linked statically: the executable must run outside the
+# MinGW environment (otherwise libstdc++-6.dll is not found from PowerShell).
 target_link_options(ledger PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-static-libstdc++ -static-libgcc>
   $<$<AND:$<CXX_COMPILER_ID:GNU>,$<PLATFORM_ID:Windows>>:-static>
