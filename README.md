@@ -1,30 +1,30 @@
 # Ledger
 
-Moteur SQL embarqué en C++20, stockage en fichiers texte. Projet d'apprentissage,
-destiné ensuite à un usage personnel.
+An embedded SQL engine in C++20 with plain-text storage. A learning project,
+meant for personal use afterwards.
 
-## Périmètre (v1)
+## Scope (v1)
 
-- `CREATE TABLE` / `DROP TABLE` — types `INT`, `FLOAT`, `TEXT`, `BOOL` ;
-  contraintes `PRIMARY KEY` (une par table, implique `NOT NULL`) et `NOT NULL`.
-- `INSERT INTO t [(cols)] VALUES (...)` — une ligne par instruction.
+- `CREATE TABLE` / `DROP TABLE` — types `INT`, `FLOAT`, `TEXT`, `BOOL`;
+  constraints `PRIMARY KEY` (one per table, implies `NOT NULL`) and `NOT NULL`.
+- `INSERT INTO t [(cols)] VALUES (...)` — one row per statement.
 - `SELECT * | cols FROM t [WHERE expr] [ORDER BY col [ASC|DESC]] [LIMIT n]`.
 - `UPDATE t SET col = expr, ... [WHERE expr]`, `DELETE FROM t [WHERE expr]`.
-- Expressions : `+ - * /`, comparaisons, `AND OR NOT`, `IS [NOT] NULL`,
-  logique à trois états SQL. Identifiants insensibles à la casse.
-- Pas de jointures, d'index ni de transactions.
+- Expressions: `+ - * /`, comparisons, `AND OR NOT`, `IS [NOT] NULL`,
+  SQL three-valued logic. Case-insensitive identifiers.
+- No joins, indexes or transactions.
 
-## Compiler et tester
+## Build and test
 
-Toolchain : GCC ≥ 13 (ou Clang), CMake ≥ 3.20, Ninja. Sous Windows, MSYS2 UCRT64.
+Toolchain: GCC ≥ 13 (or Clang), CMake ≥ 3.20, Ninja. On Windows, MSYS2 UCRT64.
 
 ```sh
 cmake -S . -B build -G Ninja
 cmake --build build
-./build/ledger_tests          # suite doctest
+./build/ledger_tests          # doctest suite
 ```
 
-Avec UBSan (sans dépendance runtime, fonctionne aussi avec GCC MinGW) :
+With UBSan (no runtime dependency, also works with MinGW GCC):
 
 ```sh
 cmake -S . -B build-san -G Ninja \
@@ -32,11 +32,11 @@ cmake -S . -B build-san -G Ninja \
 cmake --build build-san && ./build-san/ledger_tests
 ```
 
-## Utiliser
+## Usage
 
 ```sh
-./build/ledger mabase            # REPL : instructions terminées par ';', .help
-./build/ledger mabase < script.sql   # mode script : arrêt à la première erreur
+./build/ledger mydb              # REPL: statements end with ';', .help for commands
+./build/ledger mydb < script.sql # script mode: stops at the first error
 ```
 
 ```
@@ -53,31 +53,31 @@ ledger> SELECT * FROM users WHERE score > 1 ORDER BY name;
 1 row
 ```
 
-Codes de sortie : `0` ok, `1` erreur SQL ou base, `2` erreur d'usage.
+Exit codes: `0` ok, `1` SQL or database error, `2` usage error.
 
-## Format sur disque
+## On-disk format
 
-Un dossier par base, un sous-dossier par table :
+One directory per database, one sub-directory per table:
 
 ```
-mabase/
-  LOCK                 présent tant qu'un processus a la base ouverte
+mydb/
+  LOCK                 present while a process has the database open
   users/
-    schema.txt         ledger-schema 1  puis  <colonne> <TYPE> [PK|NN]
-    rows.txt           ledger-rows 1    puis  I <rowid>\t<champs>  ou  D <rowid>
+    schema.txt         ledger-schema 1  then  <column> <TYPE> [PK|NN]
+    rows.txt           ledger-rows 1    then  I <rowid>\t<fields>  or  D <rowid>
 ```
 
-`rows.txt` est append-only : un `UPDATE` écrit un tombstone `D` puis une
-nouvelle version avec le même rowid ; le fichier est compacté automatiquement
-quand les tombstones dominent. Champs séparés par tabulation, `NULL` encodé
-`\N`, texte échappé (`\\ \t \n \r`).
+`rows.txt` is append-only: an `UPDATE` writes a `D` tombstone followed by a new
+version with the same rowid; the file is compacted automatically when
+tombstones dominate. Fields are tab-separated, `NULL` is encoded as `\N`, text
+is escaped (`\\ \t \n \r`).
 
 ## Architecture
 
-Couches strictes, dépendances descendantes uniquement :
+Strict layers, downward dependencies only:
 
 ```
 sql (lexer, parser, ast)  →  semantic (catalog, binder, eval)  →  exec  →  cli
-                                                 ↘  storage (IStorageEngine : FileEngine, MemoryEngine)
-core : Result<T> (pas d'exceptions), Value, Row, TableSchema
+                                                 ↘  storage (IStorageEngine: FileEngine, MemoryEngine)
+core: Result<T> (no exceptions), Value, Row, TableSchema
 ```
