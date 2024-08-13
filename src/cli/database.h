@@ -13,11 +13,11 @@
 
 namespace ledger {
 
-// Assemble FileEngine + Catalog + Executor sur un dossier. C'est l'objet que
-// manipule la CLI ; main.cpp ne fait que l'entrée/sortie.
+// Assembles FileEngine + Catalog + Executor over a directory. This is the
+// object the CLI manipulates; main.cpp only does input/output.
 class Database {
 public:
-    // Ouvre (ou crée) la base et charge les schémas dans le catalogue.
+    // Opens (or creates) the database and loads the schemas into the catalog.
     static Result<std::unique_ptr<Database>> open(const std::filesystem::path& dir);
 
     Result<QueryResult> execute(std::string_view sql) { return executor_.execute(sql); }
@@ -25,7 +25,7 @@ public:
     [[nodiscard]] const Catalog& catalog() const noexcept { return catalog_; }
     [[nodiscard]] const std::filesystem::path& directory() const noexcept { return engine_->directory(); }
 
-    // Avertissements du moteur (lignes tronquées ignorées...), vidés à l'appel.
+    // Engine warnings (dropped truncated lines...), cleared on call.
     std::vector<std::string> takeWarnings() { return engine_->takeWarnings(); }
 
 private:
@@ -37,29 +37,29 @@ private:
     Executor executor_;
 };
 
-// Découpe un texte en instructions sur les `;` situés hors chaîne '...' et
-// hors commentaire `--`. Le `;` n'est pas conservé. Les instructions vides
-// (blancs / commentaires seuls) sont omises. Un `;` final est facultatif.
-// Un BOM UTF-8 en tête de texte est ignoré.
+// Splits a text into statements on the `;` characters that sit outside a
+// '...' string and outside a `--` comment. The `;` is not kept. Empty
+// statements (whitespace / comments only) are omitted. A trailing `;` is
+// optional. A leading UTF-8 BOM is ignored.
 //
-// `sql` commence au premier caractère utile (blancs et commentaires de tête
-// retirés), `line` est sa ligne (1-based) dans le texte d'origine : une
-// position `L:C` du parser correspond donc à la ligne `line + L - 1`.
+// `sql` starts at the first useful character (leading whitespace and comments
+// removed); `line` is its line (1-based) in the original text: a parser
+// position `L:C` therefore maps to line `line + L - 1`.
 struct ScriptStatement {
     std::string sql;
     std::size_t line;
 };
 std::vector<ScriptStatement> splitStatements(std::string_view text);
 
-// Vrai si le texte se termine par une instruction complète (dernier `;` hors
-// chaîne et hors commentaire, suivi seulement de blancs / commentaires). Sert
-// au REPL pour savoir s'il faut continuer à lire.
+// True if the text ends with a complete statement (last `;` outside a string
+// and outside a comment, followed only by whitespace / comments). Used by the
+// REPL to know whether to keep reading.
 [[nodiscard]] bool endsWithCompleteStatement(std::string_view text);
 
-// Tableau ASCII aligné d'un résultat SELECT. Vide si pas de colonnes.
+// Aligned ASCII table of a SELECT result. Empty when there are no columns.
 std::string formatTable(const QueryResult& result);
 
-// Ligne de statut : "3 rows", "1 row affected", "ok".
+// Status line: "3 rows", "1 row affected", "ok".
 std::string formatSummary(const QueryResult& result);
 
 }  // namespace ledger
