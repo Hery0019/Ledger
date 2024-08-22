@@ -26,7 +26,7 @@ Ordering orderOf(const T& a, const T& b) noexcept {
     return Ordering::Equal;
 }
 
-// Parse un nombre avec from_chars en exigeant que TOUTE la chaîne soit consommée.
+// Parses a number with from_chars, requiring the WHOLE string to be consumed.
 template <typename T>
 Result<T> parseWhole(std::string_view text, DataType type) {
     T out{};
@@ -86,7 +86,7 @@ DataType Value::type() const noexcept {
         case 2: return DataType::Float;
         case 3: return DataType::Text;
         case 4: return DataType::Bool;
-        default: return DataType::Null;  // unreachable : variant jamais valueless ici
+        default: return DataType::Null;  // unreachable: the variant is never valueless here
     }
 }
 
@@ -110,7 +110,7 @@ bool Value::asBool() const {
     badAccess(DataType::Bool, type());
 }
 
-// ---- codec texte ------------------------------------------------------------
+// ---- text codec -------------------------------------------------------------
 
 Result<Value> Value::fromText(DataType type, std::string_view text) {
     switch (type) {
@@ -124,7 +124,7 @@ Result<Value> Value::fromText(DataType type, std::string_view text) {
 
         case DataType::Float: {
             LEDGER_TRY(v, parseWhole<double>(text, type));
-            return Value::real(v);  // filtre NaN/Inf ("nan", "inf" sont acceptés par from_chars)
+            return Value::real(v);  // filters NaN/Inf ("nan", "inf" are accepted by from_chars)
         }
 
         case DataType::Text:
@@ -146,7 +146,7 @@ std::string Value::toText() const {
         case DataType::Int:
             return std::to_string(asInt());
         case DataType::Float: {
-            // to_chars sans format = représentation la plus courte qui round-trip.
+            // to_chars without a format = shortest representation that round-trips.
             char buf[32];
             auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), asFloat());
             return std::string(buf, ptr);
@@ -159,7 +159,7 @@ std::string Value::toText() const {
     return {};
 }
 
-// ---- comparaison ------------------------------------------------------------
+// ---- comparison -------------------------------------------------------------
 
 Result<Ordering> Value::compare(const Value& lhs, const Value& rhs) {
     const DataType lt = lhs.type();
@@ -173,7 +173,7 @@ Result<Ordering> Value::compare(const Value& lhs, const Value& rhs) {
             case DataType::Float: return orderOf(lhs.asFloat(), rhs.asFloat());
             case DataType::Text:  return orderOf(lhs.asText(), rhs.asText());
             case DataType::Bool:  return orderOf(lhs.asBool(), rhs.asBool());
-            case DataType::Null:  break;  // déjà traité
+            case DataType::Null:  break;  // already handled
         }
     }
 
