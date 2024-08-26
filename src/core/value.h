@@ -10,62 +10,62 @@
 namespace ledger {
 
 enum class DataType {
-    Null,   // type de la valeur NULL seule ; jamais un type de colonne
-    Int,    // entier signé 64 bits
-    Float,  // double IEEE 754, fini (NaN/Inf rejetés à la construction)
-    Text,   // chaîne d'octets, comparaison bytewise (pas de collation)
+    Null,   // type of the NULL value alone; never a column type
+    Int,    // signed 64-bit integer
+    Float,  // IEEE 754 double, finite (NaN/Inf rejected at construction)
+    Text,   // byte string, bytewise comparison (no collation)
     Bool,
 };
 
 std::string_view dataTypeName(DataType type) noexcept;
 
-// Résultat d'une comparaison SQL à trois états.
-// Unknown : l'un des opérandes est NULL. Ni vrai, ni faux — un WHERE qui
-// évalue à Unknown rejette la ligne, mais NOT Unknown reste Unknown.
+// Result of a three-valued SQL comparison.
+// Unknown: one of the operands is NULL. Neither true nor false — a WHERE that
+// evaluates to Unknown rejects the row, but NOT Unknown is still Unknown.
 enum class Ordering { Less, Equal, Greater, Unknown };
 
 class Value {
 public:
-    // Constructeurs nommés : évitent l'ambiguïté int/bool/double des littéraux.
+    // Named constructors: avoid the int/bool/double ambiguity of literals.
     static Value null() noexcept { return Value{std::monostate{}}; }
     static Value integer(std::int64_t v) noexcept { return Value{v}; }
     static Value text(std::string v) noexcept { return Value{std::move(v)}; }
     static Value boolean(bool v) noexcept { return Value{v}; }
-    // Rejette NaN et ±Inf : ils n'ont pas de sémantique SQL cohérente et
-    // rendraient l'ordre total impossible.
+    // Rejects NaN and ±Inf: they have no coherent SQL semantics and would make
+    // a total order impossible.
     static Result<Value> real(double v);
 
     [[nodiscard]] DataType type() const noexcept;
     [[nodiscard]] bool isNull() const noexcept { return type() == DataType::Null; }
 
-    // Accès typé. Précondition : type() correspond. Sinon abort() (bug, pas
-    // erreur attendue : la couche sémantique doit avoir vérifié avant).
+    // Typed access. Precondition: type() matches. Otherwise abort() (a bug,
+    // not an expected error: the semantic layer must have checked before).
     [[nodiscard]] std::int64_t asInt() const;
     [[nodiscard]] double asFloat() const;
     [[nodiscard]] const std::string& asText() const;
     [[nodiscard]] bool asBool() const;
 
-    // Codec texte au niveau du type. Réversible : fromText(t, v.toText()) == v
-    // pour toute valeur non NULL. L'encodage de NULL et l'échappement des
-    // séparateurs sont la responsabilité de la couche stockage, pas de Value.
+    // Text codec at the type level. Reversible: fromText(t, v.toText()) == v
+    // for every non-NULL value. Encoding NULL and escaping separators are the
+    // storage layer's responsibility, not Value's.
     //
-    // fromText(DataType::Null, _) est une erreur : NULL se construit via null().
+    // fromText(DataType::Null, _) is an error: NULL is built with null().
     static Result<Value> fromText(DataType type, std::string_view text);
     [[nodiscard]] std::string toText() const;
 
-    // Comparaison SQL.
-    //  - NULL avec quoi que ce soit  -> Unknown
-    //  - Int vs Float                -> comparaison numérique (voir note ci-dessous)
-    //  - types incompatibles         -> TypeError (jamais un false silencieux)
-    //  - Text : ordre bytewise
-    //  - Bool : false < true
+    // SQL comparison.
+    //  - NULL with anything          -> Unknown
+    //  - Int vs Float                -> numeric comparison (see note below)
+    //  - incompatible types          -> TypeError (never a silent false)
+    //  - Text: bytewise order
+    //  - Bool: false < true
     //
-    // Note Int/Float : un Int hors de [-2^53, 2^53] converti en double perd
-    // de la précision ; la comparaison peut alors être inexacte. Assumé en v1.
+    // Int/Float note: an Int outside [-2^53, 2^53] converted to double loses
+    // precision; the comparison may then be inexact. Accepted in v1.
     [[nodiscard]] static Result<Ordering> compare(const Value& lhs, const Value& rhs);
 
-    // Égalité structurelle stricte (même type, même contenu). NULL == NULL ici.
-    // Utile pour les tests et l'unicité de clé primaire, PAS pour WHERE.
+    // Strict structural equality (same type, same content). NULL == NULL here.
+    // Useful for tests and primary-key uniqueness, NOT for WHERE.
     [[nodiscard]] bool operator==(const Value& other) const noexcept { return data_ == other.data_; }
 
 private:
