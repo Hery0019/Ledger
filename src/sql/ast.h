@@ -12,14 +12,13 @@
 
 #include "core/value.h"
 
-// Arbre syntaxique produit par le parser. Données pures : aucune logique, pas
-// de vérification sémantique (existence des tables, types des colonnes...),
-// c'est le rôle du binder. Tous les identifiants sont déjà repliés en
-// minuscules par le lexer.
+// Syntax tree produced by the parser. Pure data: no logic, no semantic checks
+// (table existence, column types...), that is the binder's job. All
+// identifiers are already folded to lowercase by the lexer.
 //
-// Choix : std::variant + unique_ptr plutôt qu'une hiérarchie virtuelle. Le
-// binder et l'exécuteur font un std::visit exhaustif : ajouter un nœud sans
-// le traiter partout devient une erreur de compilation.
+// Choice: std::variant + unique_ptr rather than a virtual hierarchy. The
+// binder and the executor do an exhaustive std::visit: adding a node without
+// handling it everywhere becomes a compile error.
 namespace ledger::ast {
 
 // ---- expressions -----------------------------------------------------------
@@ -34,7 +33,7 @@ std::string_view unaryOpName(UnaryOp op) noexcept;
 std::string_view binaryOpName(BinaryOp op) noexcept;
 
 struct Literal {
-    Value value;  // Int/Float/Text/Bool/Null, déjà convertie par le parser
+    Value value;  // Int/Float/Text/Bool/Null, already converted by the parser
 };
 
 struct ColumnRef {
@@ -52,8 +51,8 @@ struct Binary {
     ExprPtr rhs;
 };
 
-// `x IS NULL` / `x IS NOT NULL`. Nœud à part : ce n'est pas une comparaison
-// (une comparaison avec NULL donnerait Unknown, ici on veut un vrai booléen).
+// `x IS NULL` / `x IS NOT NULL`. A node of its own: this is not a comparison
+// (comparing with NULL would give Unknown; here we want a real boolean).
 struct IsNull {
     ExprPtr operand;
     bool negated;
@@ -61,23 +60,23 @@ struct IsNull {
 
 struct Expr {
     std::variant<Literal, ColumnRef, Unary, Binary, IsNull> node;
-    // Position du premier token de l'expression, pour les erreurs du binder.
+    // Position of the expression's first token, for binder error messages.
     std::size_t line;
     std::size_t column;
 };
 
-// ---- instructions ----------------------------------------------------------
+// ---- statements ------------------------------------------------------------
 
 struct ColumnDef {
     std::string name;
-    DataType type;  // jamais DataType::Null
+    DataType type;  // never DataType::Null
     bool primaryKey;
     bool notNull;
 };
 
 struct CreateTable {
     std::string table;
-    std::vector<ColumnDef> columns;  // jamais vide
+    std::vector<ColumnDef> columns;  // never empty
 };
 
 struct DropTable {
@@ -86,8 +85,8 @@ struct DropTable {
 
 struct Insert {
     std::string table;
-    std::vector<std::string> columns;  // vide = toutes les colonnes, dans l'ordre du schéma
-    std::vector<ExprPtr> values;       // jamais vide ; une seule ligne en v1
+    std::vector<std::string> columns;  // empty = every column, in schema order
+    std::vector<ExprPtr> values;       // never empty; a single row in v1
 };
 
 struct OrderBy {
@@ -96,22 +95,22 @@ struct OrderBy {
 };
 
 struct Select {
-    std::vector<std::string> columns;  // vide = `*`
+    std::vector<std::string> columns;  // empty = `*`
     std::string table;
-    ExprPtr where;  // nullptr si absent
+    ExprPtr where;  // nullptr if absent
     std::optional<OrderBy> orderBy;
-    std::optional<std::int64_t> limit;  // >= 0 si présent
+    std::optional<std::int64_t> limit;  // >= 0 if present
 };
 
 struct Update {
     std::string table;
-    std::vector<std::pair<std::string, ExprPtr>> assignments;  // jamais vide
-    ExprPtr where;  // nullptr si absent
+    std::vector<std::pair<std::string, ExprPtr>> assignments;  // never empty
+    ExprPtr where;  // nullptr if absent
 };
 
 struct Delete {
     std::string table;
-    ExprPtr where;  // nullptr si absent
+    ExprPtr where;  // nullptr if absent
 };
 
 using Statement = std::variant<CreateTable, DropTable, Insert, Select, Update, Delete>;
