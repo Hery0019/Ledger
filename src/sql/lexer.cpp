@@ -7,8 +7,8 @@ namespace ledger {
 
 namespace {
 
-// Table des mots-clés, clé en minuscules. Recherche linéaire : ~30 entrées,
-// négligeable devant le reste, et zéro allocation.
+// Keyword table, lowercase keys. Linear search: ~30 entries, negligible next
+// to everything else, and zero allocation.
 struct KeywordEntry {
     std::string_view name;
     TokenKind kind;
@@ -32,8 +32,8 @@ constexpr std::array<KeywordEntry, 30> kKeywords{{
     {"primary", TokenKind::KwPrimary}, {"key", TokenKind::KwKey},
 }};
 
-// Classification ASCII explicite : on ne veut pas dépendre de la locale, et
-// std::isalpha & co prennent un int qui doit être un unsigned char valide.
+// Explicit ASCII classification: we don't want to depend on the locale, and
+// std::isalpha & co take an int that must be a valid unsigned char.
 constexpr bool isAsciiLetter(char c) noexcept {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
 }
@@ -70,8 +70,8 @@ private:
         return pos_ + ahead < src_.size() ? src_[pos_ + ahead] : '\0';
     }
 
-    // Avance d'un caractère en tenant à jour ligne/colonne. Seul point de
-    // passage pour consommer l'entrée : garantit des positions cohérentes.
+    // Consumes one character while tracking line/column. The only way input is
+    // consumed: guarantees consistent positions.
     char advance() noexcept {
         const char c = src_[pos_++];
         if (c == '\n') {
@@ -125,11 +125,11 @@ private:
         return Token{TokenKind::Identifier, std::move(text), line, column};
     }
 
-    // Grammaire : digits [ '.' digits ] [ ('e'|'E') ['+'|'-'] digits ]
-    //          |  '.' digits [ exposant ]
-    // Un point ou un exposant sans chiffre derrière est une erreur, pas un
-    // découpage silencieux en deux tokens : `1.` ou `1e` n'a pas de sens SQL.
-    // Un identifiant collé au nombre (`12abc`) est rejeté pour la même raison.
+    // Grammar: digits [ '.' digits ] [ ('e'|'E') ['+'|'-'] digits ]
+    //        |  '.' digits [ exponent ]
+    // A dot or an exponent with no digit behind it is an error, not a silent
+    // split into two tokens: `1.` or `1e` makes no sense in SQL. An identifier
+    // glued to the number (`12abc`) is rejected for the same reason.
     Result<Token> number(std::size_t line, std::size_t column) {
         std::string text;
         bool isFloat = false;
@@ -151,8 +151,8 @@ private:
             while (isDigit(peek())) text.push_back(advance());
         }
 
-        // `1.5.2` ou `12abc` : un nombre suivi directement d'un point ou d'une
-        // lettre n'est jamais valide, on refuse plutôt que de couper en deux.
+        // `1.5.2` or `12abc`: a number directly followed by a dot or a letter
+        // is never valid; refuse rather than split in two.
         if (peek() == '.' || isIdentStart(peek())) {
             return errorHere(line, column, "malformed number '" + text + "': unexpected '" +
                                                std::string(1, peek()) + "'");
@@ -162,7 +162,7 @@ private:
     }
 
     Result<Token> string(std::size_t line, std::size_t column) {
-        advance();  // quote ouvrante
+        advance();  // opening quote
         std::string text;
         for (;;) {
             if (atEnd()) return errorHere(line, column, "unterminated string literal");
@@ -180,7 +180,7 @@ private:
 
     Result<Token> symbol(std::size_t line, std::size_t column) {
         const char c = advance();
-        // Symboles à deux caractères d'abord : `<=` ne doit pas devenir `<` `=`.
+        // Two-character symbols first: `<=` must not become `<` `=`.
         if (c == '<' && peek() == '=') { advance(); return Token{TokenKind::LtEq, {}, line, column}; }
         if (c == '<' && peek() == '>') { advance(); return Token{TokenKind::NotEq, {}, line, column}; }
         if (c == '>' && peek() == '=') { advance(); return Token{TokenKind::GtEq, {}, line, column}; }
@@ -201,8 +201,8 @@ private:
             default: break;
         }
 
-        // `!` seul, octet non ASCII, caractère de contrôle... On affiche le
-        // code plutôt que le caractère : un octet UTF-8 isolé est illisible.
+        // Lone `!`, non-ASCII byte, control character... Show the code rather
+        // than the character: an isolated UTF-8 byte is unreadable.
         const auto code = static_cast<unsigned>(static_cast<unsigned char>(c));
         std::string what = "unexpected character ";
         if (code >= 0x20 && code < 0x7F) {
