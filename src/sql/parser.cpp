@@ -25,12 +25,12 @@ public:
     }
 
 private:
-    // ---- accès aux tokens --------------------------------------------------
+    // ---- token access ------------------------------------------------------
 
     [[nodiscard]] const Token& peek() const noexcept { return tokens_[pos_]; }
     [[nodiscard]] bool at(TokenKind kind) const noexcept { return peek().kind == kind; }
 
-    // Le dernier token est toujours End : on ne dépasse jamais.
+    // The last token is always End: we never run past it.
     const Token& advance() noexcept {
         const Token& t = tokens_[pos_];
         if (!at(TokenKind::End)) ++pos_;
@@ -53,7 +53,7 @@ private:
         return advance().text;
     }
 
-    // ---- erreurs -----------------------------------------------------------
+    // ---- errors ------------------------------------------------------------
 
     static std::string describe(const Token& t) {
         switch (t.kind) {
@@ -74,7 +74,7 @@ private:
         return errorAt(peek(), "expected " + expected + ", got " + describe(peek()));
     }
 
-    // ---- instructions ------------------------------------------------------
+    // ---- statements --------------------------------------------------------
 
     Result<Statement> statement() {
         switch (peek().kind) {
@@ -110,7 +110,7 @@ private:
         LEDGER_TRY(type, dataType());
 
         ColumnDef col{std::move(name), type, false, false};
-        // Contraintes dans n'importe quel ordre, chacune au plus une fois.
+        // Constraints in any order, each at most once.
         for (;;) {
             if (at(TokenKind::KwPrimary)) {
                 if (col.primaryKey) return unexpected("a single PRIMARY KEY constraint");
@@ -201,8 +201,8 @@ private:
         }
 
         if (accept(TokenKind::KwLimit)) {
-            // Entier littéral non signé uniquement : `LIMIT -1` ou `LIMIT n` n'a
-            // pas de sens en v1, et le refuser ici évite un cas au binder.
+            // Unsigned integer literal only: `LIMIT -1` or `LIMIT n` makes no
+            // sense in v1, and refusing it here saves the binder a case.
             if (!at(TokenKind::Integer)) return unexpected("non-negative integer after LIMIT");
             const Token& tok = advance();
             auto v = Value::fromText(DataType::Int, tok.text);
@@ -253,7 +253,7 @@ private:
 
     Result<ExprPtr> expression() { return orExpr(); }
 
-    // Les niveaux binaires associatifs à gauche partagent la même boucle.
+    // Left-associative binary levels share the same loop.
     template <typename Next>
     Result<ExprPtr> leftAssoc(Next next, std::initializer_list<std::pair<TokenKind, BinaryOp>> ops) {
         const Token& start = peek();
@@ -301,7 +301,7 @@ private:
         }
     }
 
-    // Non associatif : `a = b = c` et `a IS NULL = b` sont rejetés.
+    // Non-associative: `a = b = c` and `a IS NULL = b` are rejected.
     Result<ExprPtr> comparison() {
         const Token& start = peek();
         LEDGER_TRY(lhs, additive());
