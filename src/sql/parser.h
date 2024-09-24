@@ -7,19 +7,19 @@
 
 namespace ledger {
 
-// Analyse une instruction SQL complète (lexer + parser) et produit son AST.
+// Parses a complete SQL statement (lexer + parser) and produces its AST.
 //
-//  - une seule instruction par appel ; le `;` final est facultatif, tout ce
-//    qui suit est une erreur (la CLI se charge de découper le multi-instructions) ;
-//  - toute erreur est un SyntaxError positionné `ligne:col: expected X, got Y` ;
-//    on s'arrête à la première, pas de récupération ;
-//  - les littéraux sont convertis en Value ici (Value::fromText), donc un
-//    entier hors plage est signalé avec sa position ;
-//  - `-5` reste Unary(Neg, 5) : le pliage de constantes est le rôle du binder.
+//  - one statement per call; the trailing `;` is optional, anything after it
+//    is an error (the CLI takes care of splitting multi-statement input);
+//  - every error is a positioned SyntaxError `line:col: expected X, got Y`;
+//    we stop at the first one, no recovery;
+//  - literals are converted to Value here (Value::fromText), so an
+//    out-of-range integer is reported with its position;
+//  - `-5` stays Unary(Neg, 5): constant folding is the binder's job.
 //
-// Précédence des expressions, de la plus faible à la plus forte :
-//   OR  <  AND  <  NOT  <  comparaison (= <> < <= > >=, IS [NOT] NULL ;
-//   non associative : `a = b = c` est rejeté)  <  + -  <  * /  <  - unaire.
+// Expression precedence, weakest to strongest:
+//   OR  <  AND  <  NOT  <  comparison (= <> < <= > >=, IS [NOT] NULL;
+//   non-associative: `a = b = c` is rejected)  <  + -  <  * /  <  unary -.
 Result<ast::Statement> parse(std::string_view sql);
 
 }  // namespace ledger
