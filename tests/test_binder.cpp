@@ -25,7 +25,7 @@ template <typename T>
 T bindAs(std::string_view sql, const Catalog& cat) {
     auto parsed = parse(sql);
     REQUIRE_MESSAGE(parsed.ok(), (parsed.ok() ? "" : parsed.error().message));
-    auto bound = ledger::bind(parsed.value(), cat);  // qualifié : ADL sur std::variant trouverait std::bind
+    auto bound = ledger::bind(parsed.value(), cat);  // qualified: ADL on std::variant would find std::bind
     REQUIRE_MESSAGE(bound.ok(), "unexpected error: " << (bound.ok() ? "" : bound.error().message));
     REQUIRE(std::holds_alternative<T>(bound.value()));
     return std::move(std::get<T>(bound.value()));
@@ -34,12 +34,12 @@ T bindAs(std::string_view sql, const Catalog& cat) {
 Error errorOf(std::string_view sql, const Catalog& cat) {
     auto parsed = parse(sql);
     REQUIRE_MESSAGE(parsed.ok(), (parsed.ok() ? "" : parsed.error().message));
-    auto bound = ledger::bind(parsed.value(), cat);  // qualifié : ADL sur std::variant trouverait std::bind
+    auto bound = ledger::bind(parsed.value(), cat);  // qualified: ADL on std::variant would find std::bind
     REQUIRE_FALSE(bound.ok());
     return bound.error();
 }
 
-// Lie une expression via un WHERE sur users.
+// Binds an expression through a WHERE on users.
 BoundExprPtr where(std::string_view e, const Catalog& cat) {
     return std::move(bindAs<BoundSelect>("SELECT * FROM users WHERE " + std::string(e), cat).where);
 }
@@ -103,7 +103,7 @@ TEST_CASE("bind INSERT without column list fills the row in schema order") {
 TEST_CASE("bind INSERT with column list leaves missing nullable columns NULL") {
     const Catalog cat = catalog();
     const auto s = bindAs<BoundInsert>("INSERT INTO users (name, id) VALUES ('a', 2 * 3)", cat);
-    CHECK(s.row[0] == Value::integer(6));  // expression pliée
+    CHECK(s.row[0] == Value::integer(6));  // folded expression
     CHECK(s.row[1] == Value::text("a"));
     CHECK(s.row[2].isNull());
     CHECK(s.row[3].isNull());
@@ -134,7 +134,7 @@ TEST_CASE("bind INSERT errors") {
     CHECK(e.message == "1:38: column 'id' expects INT, got TEXT");
 
     e = errorOf("INSERT INTO users (id, name) VALUES (1.5, 'a')", cat);
-    CHECK(e.message == "1:38: column 'id' expects INT, got FLOAT");  // pas de Float -> Int
+    CHECK(e.message == "1:38: column 'id' expects INT, got FLOAT");  // no Float -> Int
 
     e = errorOf("INSERT INTO users (id, name) VALUES (1, NULL)", cat);
     CHECK(e.code == ErrorCode::ConstraintViolation);
@@ -195,7 +195,7 @@ TEST_CASE("bind WHERE must be boolean") {
     CHECK(whereError("name", cat) == "1:27: WHERE must be BOOL, got TEXT");
     CHECK(whereError("id + 1", cat) == "1:27: WHERE must be BOOL, got INT");
     CHECK(where("active", cat)->type == DataType::Bool);
-    CHECK(where("NULL", cat)->type == DataType::Null);  // accepté : aucune ligne
+    CHECK(where("NULL", cat)->type == DataType::Null);  // accepted: no row
     CHECK(where("TRUE", cat)->type == DataType::Bool);
 }
 
@@ -242,7 +242,7 @@ TEST_CASE("bind DELETE") {
     CHECK(errorOf("DELETE FROM nope", cat).message == "unknown table 'nope'");
 }
 
-// ---- typage des expressions ------------------------------------------------
+// ---- expression typing -----------------------------------------------------
 
 TEST_CASE("bind expression types: arithmetic") {
     const Catalog cat = catalog();
@@ -250,13 +250,13 @@ TEST_CASE("bind expression types: arithmetic") {
         return bindAs<BoundUpdate>("UPDATE users SET score = " + std::string(e), cat)
             .assignments[0].second->type;
     };
-    // score est FLOAT : le résultat est castée/pliée en Float. On regarde donc
-    // le type via une colonne INT quand on veut vérifier Int.
+    // score is FLOAT: the result is cast/folded to Float. So we look at the
+    // type through an INT column when we want to check Int.
     CHECK(sel("id + 1") == DataType::Float);
     CHECK(bindAs<BoundUpdate>("UPDATE users SET id = id + 1", cat).assignments[0].second->type == DataType::Int);
     CHECK(bindAs<BoundUpdate>("UPDATE users SET id = id + NULL", cat).assignments[0].second->type == DataType::Int);
     CHECK(sel("score * 2") == DataType::Float);
-    CHECK(sel("id / 2") == DataType::Float);  // cast inséré autour d'un Int
+    CHECK(sel("id / 2") == DataType::Float);  // cast inserted around an Int
     CHECK(sel("NULL") == DataType::Null);
 }
 
@@ -271,7 +271,7 @@ TEST_CASE("bind expression type errors") {
     CHECK(whereError("name = 1", cat) == "1:27: cannot compare TEXT with INT");
     CHECK(whereError("active = 1", cat) == "1:27: cannot compare BOOL with INT");
     CHECK(whereError("id = 'a'", cat) == "1:27: cannot compare INT with TEXT");
-    // Position de la sous-expression fautive, pas de la racine.
+    // Position of the offending sub-expression, not of the root.
     CHECK(whereError("active AND (name + 1 > 0)", cat) == "1:39: cannot apply '+' to TEXT and INT");
 }
 
@@ -291,7 +291,7 @@ TEST_CASE("bind expression types: comparisons and logic") {
     CHECK(where("NULL = NULL", cat)->type == DataType::Null);
 }
 
-// ---- pliage de constantes --------------------------------------------------
+// ---- constant folding ------------------------------------------------------
 
 TEST_CASE("bind folds constant sub-expressions") {
     const Catalog cat = catalog();
@@ -318,8 +318,8 @@ TEST_CASE("bind reports data errors in constants with their position") {
     CHECK(e.message == "1:32: division by zero");
     e = errorOf("SELECT * FROM users WHERE id = 9223372036854775807 + 1", cat);
     CHECK(e.message == "1:32: integer overflow in '+'");
-    // -9223372036854775808 n'est pas représentable comme littéral positif nié :
-    // le parser lit 9223372036854775808 (hors plage) avant même le binder.
+    // -9223372036854775808 cannot be written as a negated positive literal:
+    // the parser reads 9223372036854775808 (out of range) before the binder runs.
     auto p = parse("SELECT * FROM users WHERE id = -9223372036854775808");
     CHECK_FALSE(p.ok());
 }
