@@ -27,7 +27,7 @@ std::string errorOf(const Result<Record>& r) {
 
 }  // namespace
 
-// ---- texte -----------------------------------------------------------------
+// ---- text ------------------------------------------------------------------
 
 TEST_CASE("escapeText / unescapeText round-trip") {
     const std::string cases[] = {"", "plain", "tab\there", "line\nbreak", "cr\rlf\n", "back\\slash",
@@ -50,7 +50,7 @@ TEST_CASE("unescapeText rejects invalid escapes") {
     CHECK(unescapeText("\\x").error().code == ErrorCode::Corruption);
 }
 
-// ---- valeurs ---------------------------------------------------------------
+// ---- values ----------------------------------------------------------------
 
 TEST_CASE("encodeValue / decodeValue round-trip for every type") {
     CHECK(encodeValue(Value::null()) == "\\N");
@@ -70,9 +70,9 @@ TEST_CASE("encodeValue / decodeValue round-trip for every type") {
 }
 
 TEST_CASE("the text 'NULL' and the text '\\N' are not NULL") {
-    // Le texte « NULL » est un mot, pas l'absence de valeur.
+    // The text "NULL" is a word, not the absence of a value.
     CHECK(decodeValue("NULL", DataType::Text).value() == Value::text("NULL"));
-    // Le texte « \N » (deux caractères) s'échappe en `\\N`, jamais en `\N`.
+    // The text "\N" (two characters) escapes to `\\N`, never to `\N`.
     CHECK(encodeValue(Value::text("\\N")) == "\\\\N");
     CHECK(decodeValue("\\\\N", DataType::Text).value() == Value::text("\\N"));
 }
@@ -86,7 +86,7 @@ TEST_CASE("decodeValue reports corruption") {
     CHECK_FALSE(decodeValue("", DataType::Int).ok());
 }
 
-// ---- schéma ----------------------------------------------------------------
+// ---- schema ----------------------------------------------------------------
 
 TEST_CASE("encodeSchema produces the documented format") {
     CHECK(encodeSchema(schema()) ==
@@ -138,7 +138,7 @@ TEST_CASE("decodeSchema rejects malformed files") {
     check("ledger-schema 1\na INT\na TEXT\n", "schema.txt:3: duplicate column 'a'");
 }
 
-// ---- enregistrements -------------------------------------------------------
+// ---- records ---------------------------------------------------------------
 
 TEST_CASE("encodeInsert / encodeTombstone") {
     const Row row{Value::integer(7), Value::text("a\tb"), Value::null(), Value::boolean(false)};

@@ -16,7 +16,7 @@ std::vector<std::string> sqls(std::string_view text) {
 }
 }  // namespace
 
-// ---- découpage -------------------------------------------------------------
+// ---- splitting -------------------------------------------------------------
 
 TEST_CASE("splitStatements: basic splitting, trailing ; optional, empties dropped") {
     CHECK(sqls("SELECT 1; SELECT 2") == std::vector<std::string>{"SELECT 1", "SELECT 2"});
@@ -56,7 +56,7 @@ TEST_CASE("splitStatements: line numbers point at the first non-blank character"
     CHECK(s[1].line == 3);
     CHECK(s[2].line == 5);
     CHECK(s[1].sql == "SELECT 2");
-    CHECK(s[2].sql == "SELECT\n3");  // commentaire de tête retiré
+    CHECK(s[2].sql == "SELECT\n3");  // leading comment removed
 }
 
 TEST_CASE("endsWithCompleteStatement") {
@@ -72,7 +72,7 @@ TEST_CASE("endsWithCompleteStatement") {
     CHECK_FALSE(endsWithCompleteStatement(""));
 }
 
-// ---- affichage -------------------------------------------------------------
+// ---- display ---------------------------------------------------------------
 
 TEST_CASE("formatTable aligns columns and prints NULL") {
     QueryResult r;
@@ -157,7 +157,7 @@ TEST_CASE("Database: open loads schemas, execute runs end to end, reopen keeps d
     }
     {
         auto reopened = Database::open(dir);
-        CHECK(reopened.ok());  // le verrou a bien été relâché par la fermeture précédente
+        CHECK(reopened.ok());  // the lock was released by the previous close
     }
     fs::remove_all(dir);
 }
