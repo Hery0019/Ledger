@@ -13,7 +13,7 @@ namespace fs = std::filesystem;
 
 namespace {
 
-// Dossier de base jetable, unique par test, détruit à la sortie.
+// Throwaway database directory, unique per test, destroyed on exit.
 struct TempDir {
     fs::path path;
     explicit TempDir(const char* name) : path(fs::temp_directory_path() / ("ledger_test_" + std::string(name))) {
@@ -67,7 +67,7 @@ std::size_t countLines(const fs::path& p) {
 
 }  // namespace
 
-// ---- cycle de vie ----------------------------------------------------------
+// ---- lifecycle -------------------------------------------------------------
 
 TEST_CASE("FileEngine: open creates the directory and the LOCK, close removes the LOCK") {
     TempDir d("open");
@@ -113,7 +113,7 @@ TEST_CASE("FileEngine: reserved Windows device names are refused as table names"
     CHECK(e->createTable(ok).ok());
 }
 
-// ---- persistance -----------------------------------------------------------
+// ---- persistence -----------------------------------------------------------
 
 TEST_CASE("FileEngine: rows survive close and reopen, rowids continue") {
     TempDir d("persist");
@@ -173,7 +173,7 @@ TEST_CASE("FileEngine: remove appends a tombstone and the row is gone after reop
     const auto rows = all(*e, "t");
     REQUIRE(rows.size() == 1);
     CHECK(rows[0].first == 2);
-    CHECK(e->insert("t", row(3, "c")).value() == 3);  // 1 n'est jamais réutilisé
+    CHECK(e->insert("t", row(3, "c")).value() == 3);  // 1 is never reused
 }
 
 TEST_CASE("FileEngine: text with tabs, newlines and NULL round-trips through the file") {
@@ -184,7 +184,7 @@ TEST_CASE("FileEngine: text with tabs, newlines and NULL round-trips through the
         REQUIRE(e->createTable(schema()).ok());
         REQUIRE(e->insert("t", tricky).ok());
     }
-    CHECK(countLines(d.path / "t" / "rows.txt") == 2);  // en-tête + une ligne
+    CHECK(countLines(d.path / "t" / "rows.txt") == 2);  // header + one line
     auto e = openDb(d.path);
     CHECK(all(*e, "t")[0].second == tricky);
 }
@@ -198,7 +198,7 @@ TEST_CASE("FileEngine: dropTable removes the directory") {
     CHECK_FALSE(fs::exists(d.path / "t"));
     CHECK(e->dropTable("t").error().code == ErrorCode::NotFound);
     CHECK(e->loadSchemas().value().empty());
-    REQUIRE(e->createTable(schema()).ok());  // recréable
+    REQUIRE(e->createTable(schema()).ok());  // can be recreated
     CHECK(e->insert("t", row(1, "a")).value() == 1);
 }
 
@@ -217,7 +217,7 @@ TEST_CASE("FileEngine: explicit compact rewrites the file without tombstones") {
     CHECK(readFile(d.path / "t" / "rows.txt") ==
           "ledger-rows 1\nI 1\t1\tx\t0.5\nI 3\t3\tx\t1.5\nI 5\t5\tfive\t2.5\n");
     CHECK_FALSE(fs::exists(d.path / "t" / "rows.txt.tmp"));
-    // Le fichier reste utilisable après compaction.
+    // The file stays usable after compaction.
     CHECK(e->insert("t", row(6, "six")).value() == 6);
     CHECK(countLines(d.path / "t" / "rows.txt") == 4 + 1);
     auto rows = all(*e, "t");
@@ -231,17 +231,17 @@ TEST_CASE("FileEngine: automatic compaction when tombstones dominate") {
     REQUIRE(e->createTable(schema()).ok());
     const int n = static_cast<int>(FileEngine::kCompactMinTombstones) + 10;
     for (int i = 1; i <= n; ++i) REQUIRE(e->insert("t", row(i, "x")).ok());
-    // Supprime toutes sauf une : tombstones > seuil et > lignes vivantes.
+    // Delete all but one: tombstones > threshold and > live rows.
     for (int i = 1; i < n; ++i) REQUIRE(e->remove("t", static_cast<RowId>(i)).ok());
-    // La compaction s'est déclenchée à la 1001e suppression (9 lignes vivantes
-    // restaient) ; les 8 suppressions suivantes ont été ajoutées après.
+    // Compaction fired on the 1001st deletion (9 live rows were left); the
+    // next 8 deletions were appended afterwards.
     CHECK(countLines(d.path / "t" / "rows.txt") == 1 + 9 + 8);
     auto rows = all(*e, "t");
     REQUIRE(rows.size() == 1);
     CHECK(rows[0].first == static_cast<RowId>(n));
 }
 
-// ---- robustesse ------------------------------------------------------------
+// ---- robustness ------------------------------------------------------------
 
 TEST_CASE("FileEngine: a truncated last line is ignored with a warning") {
     TempDir d("truncated");
@@ -252,7 +252,7 @@ TEST_CASE("FileEngine: a truncated last line is ignored with a warning") {
         REQUIRE(e->insert("t", row(2, "b")).ok());
     }
     const fs::path rows = d.path / "t" / "rows.txt";
-    writeFile(rows, readFile(rows) + "I 3\t3\tcar");  // append interrompu, pas de '\n'
+    writeFile(rows, readFile(rows) + "I 3\t3\tcar");  // interrupted append, no '\n'
     auto e = openDb(d.path);
     const auto got = all(*e, "t");
     REQUIRE(got.size() == 2);
@@ -260,7 +260,7 @@ TEST_CASE("FileEngine: a truncated last line is ignored with a warning") {
     REQUIRE(warnings.size() == 1);
     CHECK(warnings[0].find("ignoring truncated last line 'I 3\t3\tcar'") != std::string::npos);
     CHECK(e->takeWarnings().empty());
-    // La prochaine écriture repart proprement sur sa propre ligne.
+    // The next write starts cleanly on its own line.
     CHECK(e->insert("t", row(3, "c")).value() == 3);
     CHECK(all(*e, "t").size() == 3);
     e.reset();
@@ -327,7 +327,7 @@ TEST_CASE("FileEngine: corrupted schema.txt fails at open") {
     REQUIRE_FALSE(r.ok());
     CHECK(r.error().code == ErrorCode::Corruption);
     CHECK(r.error().message.find("schema.txt:2: unknown type 'DATE'") != std::string::npos);
-    // Le verrou n'est pas laissé derrière.
+    // The lock is not left behind.
     CHECK_FALSE(fs::exists(d.path / "LOCK"));
 }
 

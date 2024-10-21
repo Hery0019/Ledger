@@ -17,7 +17,7 @@ std::vector<TokenKind> kinds(std::string_view sql) {
     return out;
 }
 
-// Message d'erreur d'une entrée invalide. Précondition : tokenize échoue.
+// Error message of an invalid input. Precondition: tokenize fails.
 std::string errorOf(std::string_view sql) {
     auto r = tokenize(sql);
     REQUIRE_FALSE(r.ok());
@@ -27,7 +27,7 @@ std::string errorOf(std::string_view sql) {
 
 }  // namespace
 
-// ---- structure générale ----------------------------------------------------
+// ---- general structure -----------------------------------------------------
 
 TEST_CASE("empty input yields only End") {
     CHECK(kinds("") == std::vector<TokenKind>{TokenKind::End});
@@ -44,7 +44,7 @@ TEST_CASE("a full statement is tokenized in order") {
               TokenKind::Semicolon, TokenKind::End});
 }
 
-// ---- mots-clés et identifiants --------------------------------------------
+// ---- keywords and identifiers ---------------------------------------------
 
 TEST_CASE("keywords are recognized regardless of case") {
     CHECK(kinds("select")[0] == TokenKind::KwSelect);
@@ -107,7 +107,7 @@ TEST_CASE("non-ASCII bytes are rejected") {
     CHECK(errorOf("SELECT \xC3\xA9 FROM t") == "1:8: unexpected character 0xC3");
 }
 
-// ---- nombres ---------------------------------------------------------------
+// ---- numbers ---------------------------------------------------------------
 
 TEST_CASE("integer literals keep their source text") {
     const auto toks = lex("0 42 007 99999999999999999999");
@@ -116,7 +116,7 @@ TEST_CASE("integer literals keep their source text") {
     CHECK(toks[0].text == "0");
     CHECK(toks[1].text == "42");
     CHECK(toks[2].text == "007");
-    // Le débordement n'est pas le problème du lexer : Value::fromText le signalera.
+    // Overflow is not the lexer's problem: Value::fromText will report it.
     CHECK(toks[3].text == "99999999999999999999");
 }
 
@@ -153,7 +153,7 @@ TEST_CASE("a lone dot is an error") {
     CHECK(errorOf("a.b") == "1:2: unexpected character '.'");
 }
 
-// ---- chaînes ---------------------------------------------------------------
+// ---- strings ---------------------------------------------------------------
 
 TEST_CASE("string literals are unquoted and unescaped") {
     const auto toks = lex("'hello' '' 'it''s' 'a''''b'");
@@ -185,7 +185,7 @@ TEST_CASE("unterminated strings are errors reported at the opening quote") {
     CHECK(errorOf("x = 'a\n") == "1:5: unterminated string literal");
 }
 
-// ---- symboles --------------------------------------------------------------
+// ---- symbols ---------------------------------------------------------------
 
 TEST_CASE("every symbol is recognized") {
     CHECK(kinds("( ) , ; * + - / = <> != < <= > >=") ==
@@ -218,7 +218,7 @@ TEST_CASE("unknown characters are errors") {
     CHECK(errorOf("\x01") == "1:1: unexpected character 0x01");
 }
 
-// ---- commentaires ----------------------------------------------------------
+// ---- comments --------------------------------------------------------------
 
 TEST_CASE("line comments are ignored") {
     CHECK(kinds("SELECT -- everything after is ignored\n 1") ==
@@ -262,7 +262,7 @@ TEST_CASE("error positions point at the offending token on later lines") {
                                              "identifiers are case-insensitive and folded to lowercase");
 }
 
-// ---- noms de tokens --------------------------------------------------------
+// ---- token names -----------------------------------------------------------
 
 TEST_CASE("tokenKindName covers keywords, symbols and categories") {
     CHECK(tokenKindName(TokenKind::KwSelect) == "SELECT");
