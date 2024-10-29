@@ -39,6 +39,12 @@ cmake --build build-san && ./build-san/ledger_tests
 ./build/ledger mydb < script.sql # script mode: stops at the first error
 ```
 
+A bare name like `mydb` is stored under the data root: `data/mydb` relative to
+the current directory, or `$LEDGER_DATA_DIR/mydb` if that variable is set. The
+`data/` directory is ignored by git, so every database stays out of the
+repository. An argument containing a path separator (`./mydb`, `C:\dbs\mydb`)
+is used as is.
+
 ```
 ledger> CREATE TABLE users (id INT PRIMARY KEY, name TEXT NOT NULL, score FLOAT);
 ok
@@ -60,7 +66,7 @@ Exit codes: `0` ok, `1` SQL or database error, `2` usage error.
 One directory per database, one sub-directory per table:
 
 ```
-mydb/
+data/mydb/
   LOCK                 present while a process has the database open
   users/
     schema.txt         ledger-schema 1  then  <column> <TYPE> [PK|NN]
