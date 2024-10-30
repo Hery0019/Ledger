@@ -126,6 +126,20 @@ TEST_CASE("formatSummary") {
     CHECK(formatSummary(QueryResult{}) == "ok");
 }
 
+// ---- database location -----------------------------------------------------
+
+TEST_CASE("resolveDatabasePath: bare names go under the data root") {
+    namespace fs = std::filesystem;
+    CHECK(resolveDatabasePath("mydb", nullptr) == fs::path("data") / "mydb");
+    CHECK(resolveDatabasePath("mydb", "") == fs::path("data") / "mydb");
+    CHECK(resolveDatabasePath("mydb", "/srv/ledger") == fs::path("/srv/ledger") / "mydb");
+    // Anything that looks like a path is used as is.
+    CHECK(resolveDatabasePath("./mydb", nullptr) == fs::path("./mydb"));
+    CHECK(resolveDatabasePath("../elsewhere/db", "/srv/ledger") == fs::path("../elsewhere/db"));
+    CHECK(resolveDatabasePath("sub\\db", nullptr) == fs::path("sub\\db"));
+    CHECK(resolveDatabasePath("C:\\x\\db", nullptr) == fs::path("C:\\x\\db"));
+}
+
 // ---- Database --------------------------------------------------------------
 
 TEST_CASE("Database: open loads schemas, execute runs end to end, reopen keeps data") {

@@ -1,4 +1,7 @@
-// ledger <directory>: opens (or creates) a database and runs SQL.
+// ledger <name-or-directory>: opens (or creates) a database and runs SQL.
+//
+// A bare name is stored under the data root (`data/` by default, or
+// LEDGER_DATA_DIR); a path is used as is. See resolveDatabasePath.
 //
 //  - stdin is a terminal : REPL. A statement ends with `;` (multi-line),
 //                          commands `.quit`, `.tables`, `.schema <table>`.
@@ -8,6 +11,7 @@
 // Exit codes: 0 ok, 1 SQL / database error, 2 usage error.
 
 #include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -133,10 +137,11 @@ int script(Database& db) {
 
 int main(int argc, char** argv) {
     if (argc != 2) {
-        std::cerr << "usage: ledger <database-directory>\n";
+        std::cerr << "usage: ledger <database-name | database-directory>\n"
+                     "  a bare name is stored under data/ (or $LEDGER_DATA_DIR)\n";
         return 2;
     }
-    auto db = Database::open(argv[1]);
+    auto db = Database::open(resolveDatabasePath(argv[1], std::getenv("LEDGER_DATA_DIR")));
     if (!db.ok()) {
         printError(db.error());
         return 1;
