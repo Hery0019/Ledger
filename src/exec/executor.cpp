@@ -57,6 +57,32 @@ Result<QueryResult> Executor::run(const BoundDropTable& s) {
     return QueryResult{};
 }
 
+// Views live in the catalog; the engine only persists the list. The catalog
+// is updated first, then the whole list is saved; on a save failure the
+// catalog change is rolled back so that memory and disk never disagree.
+Result<QueryResult> Executor::run(const BoundCreateView& s) {
+    LEDGER_TRY_VOID(catalog_.addView(s.def, s.source));
+    auto saved = engine_.saveViews(catalog_.views());
+    if (!saved.ok()) {
+        (void)catalog_.removeView(s.def.name);
+        return saved.error();
+    }
+    return QueryResult{};
+}
+
+Result<QueryResult> Executor::run(const BoundDropView& s) {
+    const ViewEntry* entry = catalog_.findView(s.name);
+    if (!entry) return makeError(ErrorCode::NotFound, "unknown view '" + s.name + "'");
+    const ViewEntry backup = *entry;
+    LEDGER_TRY_VOID(catalog_.removeView(s.name));
+    auto saved = engine_.saveViews(catalog_.views());
+    if (!saved.ok()) {
+        (void)catalog_.addView(backup.def, backup.source);
+        return saved.error();
+    }
+    return QueryResult{};
+}
+
 // ---- helpers ---------------------------------------------------------------
 
 Result<std::vector<std::pair<RowId, Row>>> Executor::filter(const TableSchema& table,
