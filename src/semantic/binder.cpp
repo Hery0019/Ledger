@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "semantic/eval.h"
+#include "sql/parser.h"
 
 namespace ledger {
 
@@ -25,8 +26,50 @@ bool isComparison(BinaryOp op) noexcept {
 bool isLogical(BinaryOp op) noexcept { return op == BinaryOp::And || op == BinaryOp::Or; }
 
 Error notFoundTable(const std::string& name) {
-    return makeError(ErrorCode::NotFound, "unknown table '" + name + "'");
+    return makeError(ErrorCode::NotFound, "unknown table or view '" + name + "'");
 }
+
+// Bound to a view nesting level: a view cannot read from itself (creation
+// requires the source to exist first), so this only guards against a
+// hand-edited views file.
+constexpr int kMaxViewDepth = 32;
+
+// What a FROM clause resolves to: the underlying table, the columns visible
+// through the (possibly nested) views, and the filters those views apply.
+struct Source {
+    const TableSchema* table;
+    std::vector<std::size_t> visible;   // indices into table->columns
+    std::vector<BoundExprPtr> filters;  // one per view level with a WHERE
+    std::string name;                   // as written in the FROM
+    bool isView;
+};
+
+// Column scope of an expression: the table, restricted to the columns a view
+// exposes. nullptr scope = no column allowed (INSERT ... VALUES).
+struct Scope {
+    const TableSchema* table;
+    const std::vector<std::size_t>* visible;  // nullptr = every column
+    std::string_view name;
+    bool isView;
+
+    [[nodiscard]] std::optional<std::size_t> resolve(std::string_view column) const noexcept {
+        const auto idx = table->columnIndex(column);
+        if (!idx) return std::nullopt;
+        if (visible) {
+            for (const std::size_t v : *visible) {
+                if (v == *idx) return idx;
+            }
+            return std::nullopt;
+        }
+        return idx;
+    }
+
+    [[nodiscard]] Error unknownColumn(const std::string& column) const {
+        return makeError(ErrorCode::NotFound, "unknown column '" + column + "' in " +
+                                                  (isView ? "view '" : "table '") +
+                                                  std::string(name) + "'");
+    }
+};
 
 class Binder {
 public:
@@ -38,11 +81,11 @@ public:
     }
 
 private:
-    // ---- statements --------------------------------------------------------
+    // ---- DDL ---------------------------------------------------------------
 
     Result<BoundStatement> bindStatement(const ast::CreateTable& s) {
-        if (catalog_.contains(s.table)) {
-            return makeError(ErrorCode::AlreadyExists, "table '" + s.table + "' already exists");
+        if (catalog_.hasName(s.table)) {
+            return makeError(ErrorCode::AlreadyExists, "'" + s.table + "' already exists");
         }
         TableSchema schema{s.table, {}};
         std::set<std::string> seen;
@@ -65,13 +108,59 @@ private:
     }
 
     Result<BoundStatement> bindStatement(const ast::DropTable& s) {
-        if (!catalog_.contains(s.table)) return notFoundTable(s.table);
+        if (!catalog_.contains(s.table)) {
+            if (catalog_.findView(s.table)) {
+                return makeError(ErrorCode::SyntaxError,
+                                 "'" + s.table + "' is a view; use DROP VIEW");
+            }
+            return makeError(ErrorCode::NotFound, "unknown table '" + s.table + "'");
+        }
+        LEDGER_TRY_VOID(checkNoDependents(s.table, "table"));
         return BoundStatement{BoundDropTable{s.table}};
     }
 
+    Result<BoundStatement> bindStatement(const ast::CreateView& s) {
+        if (catalog_.hasName(s.name)) {
+            return makeError(ErrorCode::AlreadyExists, "'" + s.name + "' already exists");
+        }
+        // Binding the view's own SELECT validates it against the catalog.
+        LEDGER_TRY_VOID(bindStatement(s.query));
+        return BoundStatement{BoundCreateView{ViewDef{s.name, s.queryText}, s.query.table}};
+    }
+
+    Result<BoundStatement> bindStatement(const ast::DropView& s) {
+        if (!catalog_.findView(s.name)) {
+            if (catalog_.contains(s.name)) {
+                return makeError(ErrorCode::SyntaxError,
+                                 "'" + s.name + "' is a table; use DROP TABLE");
+            }
+            return makeError(ErrorCode::NotFound, "unknown view '" + s.name + "'");
+        }
+        LEDGER_TRY_VOID(checkNoDependents(s.name, "view"));
+        return BoundStatement{BoundDropView{s.name}};
+    }
+
+    Result<void> checkNoDependents(const std::string& name, const char* what) const {
+        const auto deps = catalog_.dependents(name);
+        if (deps.empty()) return {};
+        return makeError(ErrorCode::ConstraintViolation,
+                         std::string(what) + " '" + name + "' is used by view '" +
+                             std::string(deps.front()) + "'");
+    }
+
+    // ---- DML ---------------------------------------------------------------
+
+    // Tables only: views are read-only.
+    Result<const TableSchema*> writableTable(const std::string& name) const {
+        if (const TableSchema* t = catalog_.find(name)) return t;
+        if (catalog_.findView(name)) {
+            return makeError(ErrorCode::SyntaxError, "'" + name + "' is a view; views are read-only");
+        }
+        return makeError(ErrorCode::NotFound, "unknown table '" + name + "'");
+    }
+
     Result<BoundStatement> bindStatement(const ast::Insert& s) {
-        const TableSchema* table = catalog_.find(s.table);
-        if (!table) return notFoundTable(s.table);
+        LEDGER_TRY(table, writableTable(s.table));
 
         // Target columns: the explicit list, or the whole schema in order.
         std::vector<std::size_t> targets;
@@ -79,8 +168,9 @@ private:
             for (std::size_t i = 0; i < table->columns.size(); ++i) targets.push_back(i);
         } else {
             std::set<std::size_t> seen;
+            const Scope scope{table, nullptr, table->name, false};
             for (const auto& name : s.columns) {
-                LEDGER_TRY(idx, resolveColumn(*table, name));
+                LEDGER_TRY(idx, resolveColumn(scope, name));
                 if (!seen.insert(idx).second) {
                     return makeError(ErrorCode::SyntaxError, "duplicate column '" + name + "'");
                 }
@@ -117,65 +207,134 @@ private:
     }
 
     Result<BoundStatement> bindStatement(const ast::Select& s) {
-        const TableSchema* table = catalog_.find(s.table);
-        if (!table) return notFoundTable(s.table);
+        LEDGER_TRY(src, resolveSource(s.table, 0));
+        const Scope scope{src.table, &src.visible, src.name, src.isView};
 
-        BoundSelect out{table, {}, nullptr, std::nullopt, s.limit};
+        BoundSelect out{src.table, {}, nullptr, std::nullopt, s.limit};
         if (s.columns.empty()) {
-            for (std::size_t i = 0; i < table->columns.size(); ++i) out.projection.push_back(i);
+            out.projection = src.visible;
         } else {
             for (const auto& name : s.columns) {
-                LEDGER_TRY(idx, resolveColumn(*table, name));
+                LEDGER_TRY(idx, resolveColumn(scope, name));
                 out.projection.push_back(idx);
             }
         }
-        LEDGER_TRY(where, bindWhere(s.where, *table));
-        out.where = std::move(where);
+
+        // WHERE = every view filter AND the query's own filter.
+        LEDGER_TRY(where, bindWhere(s.where, scope));
+        std::vector<BoundExprPtr> filters = std::move(src.filters);
+        if (where) filters.push_back(std::move(where));
+        out.where = conjunction(std::move(filters));
+
         if (s.orderBy) {
-            LEDGER_TRY(idx, resolveColumn(*table, s.orderBy->column));
+            LEDGER_TRY(idx, resolveColumn(scope, s.orderBy->column));
             out.orderBy = BoundOrderBy{idx, s.orderBy->descending};
         }
         return BoundStatement{std::move(out)};
     }
 
     Result<BoundStatement> bindStatement(const ast::Update& s) {
-        const TableSchema* table = catalog_.find(s.table);
-        if (!table) return notFoundTable(s.table);
+        LEDGER_TRY(table, writableTable(s.table));
+        const Scope scope{table, nullptr, table->name, false};
 
         BoundUpdate out{table, {}, nullptr};
         std::set<std::size_t> seen;
         for (const auto& [name, expr] : s.assignments) {
-            LEDGER_TRY(idx, resolveColumn(*table, name));
+            LEDGER_TRY(idx, resolveColumn(scope, name));
             if (!seen.insert(idx).second) {
                 return makeError(ErrorCode::SyntaxError, "column '" + name + "' assigned twice");
             }
-            LEDGER_TRY(e, bindExpr(*expr, table));
+            LEDGER_TRY(e, bindExpr(*expr, &scope));
             LEDGER_TRY(fitted, fitToColumn(std::move(e), table->columns[idx], *expr));
             out.assignments.emplace_back(idx, std::move(fitted));
         }
-        LEDGER_TRY(where, bindWhere(s.where, *table));
+        LEDGER_TRY(where, bindWhere(s.where, scope));
         out.where = std::move(where);
         return BoundStatement{std::move(out)};
     }
 
     Result<BoundStatement> bindStatement(const ast::Delete& s) {
-        const TableSchema* table = catalog_.find(s.table);
-        if (!table) return notFoundTable(s.table);
-        LEDGER_TRY(where, bindWhere(s.where, *table));
+        LEDGER_TRY(table, writableTable(s.table));
+        const Scope scope{table, nullptr, table->name, false};
+        LEDGER_TRY(where, bindWhere(s.where, scope));
         return BoundStatement{BoundDelete{table, std::move(where)}};
+    }
+
+    // ---- views -------------------------------------------------------------
+
+    // Resolves a FROM name through any number of views down to a table.
+    Result<Source> resolveSource(const std::string& name, int depth) {
+        if (const TableSchema* t = catalog_.find(name)) {
+            Source src{t, {}, {}, name, false};
+            for (std::size_t i = 0; i < t->columns.size(); ++i) src.visible.push_back(i);
+            return src;
+        }
+        const ViewEntry* view = catalog_.findView(name);
+        if (!view) return notFoundTable(name);
+        if (depth >= kMaxViewDepth) {
+            return makeError(ErrorCode::Corruption, "view '" + name + "': nesting too deep");
+        }
+
+        auto parsed = parse(view->def.sql);
+        if (!parsed.ok()) return inView(name, parsed.error());
+        const auto* query = std::get_if<ast::Select>(&parsed.value());
+        if (!query) {
+            return makeError(ErrorCode::Corruption, "view '" + name + "': definition is not a SELECT");
+        }
+
+        auto inner = resolveSource(query->table, depth + 1);
+        if (!inner.ok()) return inView(name, inner.error());
+        Source& base = inner.value();
+        const Scope innerScope{base.table, &base.visible, base.name, base.isView};
+
+        Source out{base.table, {}, std::move(base.filters), name, true};
+        if (query->columns.empty()) {
+            out.visible = base.visible;
+        } else {
+            for (const auto& col : query->columns) {
+                auto idx = resolveColumn(innerScope, col);
+                if (!idx.ok()) return inView(name, idx.error());
+                out.visible.push_back(idx.value());
+            }
+        }
+        if (query->where) {
+            auto filter = bindWhere(query->where, innerScope);
+            if (!filter.ok()) return inView(name, filter.error());
+            out.filters.push_back(std::move(filter).value());
+        }
+        return out;
+    }
+
+    static Error inView(const std::string& view, const Error& e) {
+        return makeError(e.code, "in view '" + view + "': " + e.message);
+    }
+
+    // AND of every filter; nullptr when there is none.
+    static BoundExprPtr conjunction(std::vector<BoundExprPtr> filters) {
+        BoundExprPtr acc;
+        for (auto& f : filters) {
+            if (!acc) {
+                acc = std::move(f);
+                continue;
+            }
+            const DataType type = (acc->type == DataType::Null && f->type == DataType::Null)
+                                      ? DataType::Null
+                                      : DataType::Bool;
+            acc = make(BoundBinary{BinaryOp::And, std::move(acc), std::move(f)}, type);
+        }
+        return acc;
     }
 
     // ---- helpers -----------------------------------------------------------
 
-    static Result<std::size_t> resolveColumn(const TableSchema& table, const std::string& name) {
-        if (auto idx = table.columnIndex(name)) return *idx;
-        return makeError(ErrorCode::NotFound,
-                         "unknown column '" + name + "' in table '" + table.name + "'");
+    static Result<std::size_t> resolveColumn(const Scope& scope, const std::string& name) {
+        if (auto idx = scope.resolve(name)) return *idx;
+        return scope.unknownColumn(name);
     }
 
-    Result<BoundExprPtr> bindWhere(const ast::ExprPtr& where, const TableSchema& table) {
+    Result<BoundExprPtr> bindWhere(const ast::ExprPtr& where, const Scope& scope) {
         if (!where) return BoundExprPtr{};
-        LEDGER_TRY(e, bindExpr(*where, &table));
+        LEDGER_TRY(e, bindExpr(*where, &scope));
         if (e->type != DataType::Bool && e->type != DataType::Null) {
             return errorAt(*where, ErrorCode::TypeError,
                            "WHERE must be BOOL, got " + typeName(e->type));
@@ -218,8 +377,8 @@ private:
 
     // ---- expressions -------------------------------------------------------
 
-    // `scope`: the table whose columns are visible, or nullptr (VALUES).
-    Result<BoundExprPtr> bindExpr(const ast::Expr& e, const TableSchema* scope) {
+    // `scope`: the columns visible to the expression, or nullptr (VALUES).
+    Result<BoundExprPtr> bindExpr(const ast::Expr& e, const Scope* scope) {
         LEDGER_TRY(bound, bindNode(e, scope));
         // Folding: every column-free subtree becomes a constant. A data error
         // (1/0, overflow) surfaces here, with its position.
@@ -231,7 +390,7 @@ private:
         return bound;
     }
 
-    Result<BoundExprPtr> bindNode(const ast::Expr& e, const TableSchema* scope) {
+    Result<BoundExprPtr> bindNode(const ast::Expr& e, const Scope* scope) {
         return std::visit(
             [&](const auto& n) -> Result<BoundExprPtr> {
                 using N = std::decay_t<decltype(n)>;
@@ -251,21 +410,20 @@ private:
             e.node);
     }
 
-    Result<BoundExprPtr> bindColumn(const ast::Expr& e, const ast::ColumnRef& c,
-                                    const TableSchema* scope) {
+    Result<BoundExprPtr> bindColumn(const ast::Expr& e, const ast::ColumnRef& c, const Scope* scope) {
         if (!scope) {
             return errorAt(e, ErrorCode::SyntaxError,
                            "column reference '" + c.name + "' is not allowed here");
         }
-        auto idx = scope->columnIndex(c.name);
+        auto idx = scope->resolve(c.name);
         if (!idx) {
-            return errorAt(e, ErrorCode::NotFound,
-                           "unknown column '" + c.name + "' in table '" + scope->name + "'");
+            const Error err = scope->unknownColumn(c.name);
+            return errorAt(e, err.code, err.message);
         }
-        return make(BoundColumn{*idx}, scope->columns[*idx].type);
+        return make(BoundColumn{*idx}, scope->table->columns[*idx].type);
     }
 
-    Result<BoundExprPtr> bindUnary(const ast::Expr& e, const ast::Unary& u, const TableSchema* scope) {
+    Result<BoundExprPtr> bindUnary(const ast::Expr& e, const ast::Unary& u, const Scope* scope) {
         LEDGER_TRY(operand, bindExpr(*u.operand, scope));
         const DataType t = operand->type;
         switch (u.op) {
@@ -284,7 +442,7 @@ private:
         return make(BoundUnary{u.op, std::move(operand)}, t);
     }
 
-    Result<BoundExprPtr> bindBinary(const ast::Expr& e, const ast::Binary& b, const TableSchema* scope) {
+    Result<BoundExprPtr> bindBinary(const ast::Expr& e, const ast::Binary& b, const Scope* scope) {
         LEDGER_TRY(lhs, bindExpr(*b.lhs, scope));
         LEDGER_TRY(rhs, bindExpr(*b.rhs, scope));
         const DataType lt = lhs->type;
