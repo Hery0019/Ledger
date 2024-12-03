@@ -46,6 +46,11 @@ public:
 
     // Schemas of every existing table, to fill the Catalog at startup.
     virtual Result<std::vector<TableSchema>> loadSchemas() = 0;
+
+    // Views are stored as one small list, rewritten whole on every change
+    // (creation order is preserved: it is also the load order).
+    virtual Result<void> saveViews(const std::vector<ViewDef>& views) = 0;
+    virtual Result<std::vector<ViewDef>> loadViews() = 0;
 };
 
 }  // namespace ledger
