@@ -27,6 +27,8 @@ namespace {
 constexpr std::string_view kLockFile = "LOCK";
 constexpr std::string_view kSchemaFile = "schema.txt";
 constexpr std::string_view kRowsFile = "rows.txt";
+constexpr std::string_view kViewsFile = "views.txt";
+constexpr std::string_view kViewsHeader = "ledger-views 1";
 
 Error ioError(const std::string& what, const fs::path& path) {
     return makeError(ErrorCode::IoError, what + ": " + path.string() + " (" + std::strerror(errno) + ")");
@@ -182,6 +184,66 @@ Result<void> FileEngine::dropTable(std::string_view table) {
     if (ec) return ioError("cannot remove table directory", tableDir(table), ec);
     tables_.erase(it);
     return {};
+}
+
+// ---- views -----------------------------------------------------------------
+
+Result<void> FileEngine::saveViews(const std::vector<ViewDef>& views) {
+    const std::lock_guard<std::mutex> lock(mu_);
+    std::string content(kViewsHeader);
+    content += '\n';
+    for (const auto& v : views) {
+        content += v.name;
+        content += '\t';
+        content += codec::escapeText(v.sql);  // the SELECT may span several lines
+        content += '\n';
+    }
+    // Written whole through a temporary file: a crash never leaves a
+    // half-written list.
+    const fs::path path = dir_ / kViewsFile;
+    const fs::path tmp = dir_ / "views.txt.tmp";
+    LEDGER_TRY_VOID(writeWholeFile(tmp, content));
+    std::error_code ec;
+    fs::rename(tmp, path, ec);
+    if (ec) return ioError("cannot replace views file", path, ec);
+    return {};
+}
+
+Result<std::vector<ViewDef>> FileEngine::loadViews() {
+    const std::lock_guard<std::mutex> lock(mu_);
+    const fs::path path = dir_ / kViewsFile;
+    std::vector<ViewDef> out;
+    std::error_code ec;
+    if (!fs::exists(path, ec)) return out;  // no view yet
+    LEDGER_TRY(content, readWholeFile(path));
+
+    std::string_view rest = content;
+    std::size_t lineNo = 0;
+    bool headerSeen = false;
+    while (!rest.empty()) {
+        const std::size_t nl = rest.find('\n');
+        const std::string_view line = rest.substr(0, nl);
+        rest = nl == std::string_view::npos ? std::string_view{} : rest.substr(nl + 1);
+        ++lineNo;
+        const std::string where = path.string() + ":" + std::to_string(lineNo) + ": ";
+        if (!headerSeen) {
+            if (line != kViewsHeader) {
+                return makeError(ErrorCode::Corruption, where + "missing or unknown header (expected '" +
+                                                            std::string(kViewsHeader) + "')");
+            }
+            headerSeen = true;
+            continue;
+        }
+        if (line.empty()) continue;
+        const std::size_t tab = line.find('\t');
+        if (tab == std::string_view::npos || tab == 0) {
+            return makeError(ErrorCode::Corruption, where + "malformed view line");
+        }
+        auto sql = codec::unescapeText(line.substr(tab + 1));
+        if (!sql.ok()) return makeError(ErrorCode::Corruption, where + sql.error().message);
+        out.push_back(ViewDef{std::string(line.substr(0, tab)), std::move(sql).value()});
+    }
+    return out;
 }
 
 // ---- row loading -----------------------------------------------------------
