@@ -68,7 +68,7 @@ TEST_CASE("bind CREATE TABLE errors") {
     const Catalog cat = catalog();
     auto e = errorOf("CREATE TABLE users (a INT)", cat);
     CHECK(e.code == ErrorCode::AlreadyExists);
-    CHECK(e.message == "table 'users' already exists");
+    CHECK(e.message == "'users' already exists");
 
     e = errorOf("CREATE TABLE t (a INT, A TEXT)", cat);
     CHECK(e.code == ErrorCode::SyntaxError);
@@ -180,7 +180,7 @@ TEST_CASE("bind SELECT resolves columns, ORDER BY and LIMIT") {
 
 TEST_CASE("bind SELECT errors") {
     const Catalog cat = catalog();
-    CHECK(errorOf("SELECT * FROM nope", cat).message == "unknown table 'nope'");
+    CHECK(errorOf("SELECT * FROM nope", cat).message == "unknown table or view 'nope'");
     CHECK(errorOf("SELECT nope FROM users", cat).message == "unknown column 'nope' in table 'users'");
     CHECK(errorOf("SELECT * FROM users ORDER BY nope", cat).message ==
           "unknown column 'nope' in table 'users'");
