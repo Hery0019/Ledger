@@ -70,8 +70,38 @@ std::vector<ScriptStatement> splitStatements(std::string_view text);
 // REPL to know whether to keep reading.
 [[nodiscard]] bool endsWithCompleteStatement(std::string_view text);
 
-// Aligned ASCII table of a SELECT result. Empty when there are no columns.
-std::string formatTable(const QueryResult& result);
+// How a result table is drawn.
+//
+//   plain : `+---+` ASCII borders, no colour — for pipes, files and tests.
+//   fancy : rounded Unicode box drawing, ANSI colours (bold header, dim
+//           NULLs, green/red booleans, right-aligned numbers) — for a
+//           terminal that supports UTF-8 and VT sequences.
+struct TableStyle {
+    bool unicode = false;
+    bool color = false;
+
+    static constexpr TableStyle plain() noexcept { return {false, false}; }
+    static constexpr TableStyle fancy() noexcept { return {true, true}; }
+};
+
+// ANSI escape sequences used by the fancy style, exposed so that main.cpp
+// paints its prompt, errors and summaries with the same palette.
+namespace ansi {
+inline constexpr std::string_view reset = "\x1b[0m";
+inline constexpr std::string_view bold = "\x1b[1m";
+inline constexpr std::string_view dim = "\x1b[2m";
+inline constexpr std::string_view italic = "\x1b[3m";
+inline constexpr std::string_view red = "\x1b[31m";
+inline constexpr std::string_view green = "\x1b[32m";
+inline constexpr std::string_view yellow = "\x1b[33m";
+inline constexpr std::string_view magenta = "\x1b[35m";
+inline constexpr std::string_view cyan = "\x1b[36m";
+inline constexpr std::string_view gray = "\x1b[90m";
+}  // namespace ansi
+
+// Aligned table of a SELECT result. Empty when there are no columns.
+// Numbers are right-aligned, everything else left-aligned.
+std::string formatTable(const QueryResult& result, TableStyle style = TableStyle::plain());
 
 // Status line: "3 rows", "1 row affected", "ok".
 std::string formatSummary(const QueryResult& result);
