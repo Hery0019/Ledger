@@ -1,5 +1,6 @@
 #include "doctest.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -167,6 +168,33 @@ TEST_CASE("formatTable with no rows still prints the header") {
     r.columns = {"a"};
     CHECK(formatTable(r) == "+---+\n| a |\n+---+\n+---+\n");
     CHECK(formatTable(QueryResult{}).empty());
+}
+
+TEST_CASE("formatLogo: block letters in fancy style, ASCII art in plain style") {
+    const std::string plain = formatLogo(TableStyle::plain());
+    CHECK(plain.find("|_____|_____|____/") != std::string::npos);
+    CHECK(plain.find('\x1b') == std::string::npos);
+    CHECK(plain.back() == '\n');
+    CHECK(std::count(plain.begin(), plain.end(), '\n') == 5);
+
+    const std::string blocks = formatLogo(TableStyle{true, false});
+    CHECK(blocks.find("███████╗") != std::string::npos);
+    CHECK(blocks.find('\x1b') == std::string::npos);
+    CHECK(std::count(blocks.begin(), blocks.end(), '\n') == 6);
+    // Every line of the block logo has the same display width.
+    std::size_t width = 0;
+    std::size_t start = 0;
+    for (std::size_t nl = blocks.find('\n'); nl != std::string::npos; nl = blocks.find('\n', start)) {
+        std::size_t n = 0;
+        for (std::size_t i = start; i < nl; ++i) n += (static_cast<unsigned char>(blocks[i]) & 0xC0) != 0x80;
+        if (width == 0) width = n;
+        CHECK(n == width);
+        start = nl + 1;
+    }
+
+    const std::string fancy = formatLogo(TableStyle::fancy());
+    CHECK(fancy.find("\x1b[38;5;51m") == 0);
+    CHECK(fancy.find(std::string(ansi::reset) + "\n") != std::string::npos);
 }
 
 TEST_CASE("formatSummary") {

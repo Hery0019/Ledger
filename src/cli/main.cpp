@@ -170,9 +170,10 @@ bool dotCommand(const Console& con, Database& db, const std::string& line, bool&
 }
 
 int repl(const Console& con, Database& db) {
-    std::cout << con.paint(ansi::bold, "ledger") << con.paint(ansi::dim, " · ")
-              << db.directory().string() << '\n'
-              << con.paint(ansi::dim, "End each statement with ';'. Type .help for commands.") << '\n';
+    std::cout << '\n' << formatLogo(con.style) << '\n'
+              << con.paint(ansi::bold, "  embedded SQL, plain-text storage")
+              << con.paint(ansi::dim, "  ·  ") << db.directory().string() << '\n'
+              << con.paint(ansi::dim, "  End each statement with ';'. Type .help for commands.") << "\n\n";
     const std::string prompt = con.paint(ansi::green, "ledger") + con.paint(ansi::dim, "> ");
     const std::string more = con.paint(ansi::dim, "   ...> ");
     std::string buffer;
