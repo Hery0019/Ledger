@@ -33,12 +33,14 @@ Result<std::unique_ptr<Database>> Database::open(const std::filesystem::path& di
     return db;
 }
 
-std::filesystem::path resolveDatabasePath(std::string_view arg, const char* envRoot) {
+std::filesystem::path resolveDatabasePath(std::string_view arg, const char* envRoot,
+                                          const std::filesystem::path& defaultRoot) {
     const bool bareName = arg.find('/') == std::string_view::npos &&
                           arg.find('\\') == std::string_view::npos;
     if (!bareName) return std::filesystem::path(arg);
-    const std::filesystem::path root =
-        (envRoot && *envRoot) ? std::filesystem::path(envRoot) : std::filesystem::path(kDefaultDataDir);
+    const std::filesystem::path root = (envRoot && *envRoot)
+                                           ? std::filesystem::path(envRoot)
+                                           : defaultRoot / std::filesystem::path(kDefaultDataDir);
     return root / std::filesystem::path(arg);
 }
 
