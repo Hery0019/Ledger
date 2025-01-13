@@ -16,6 +16,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -83,6 +84,28 @@ Console detectConsole() {
     return c;
 }
 
+// Where bare database names live: the parent of the directory holding the
+// executable when that directory is a build directory (`build/`, `build-san/`
+// ...), otherwise the executable's own directory. Falls back to the current
+// directory if the executable path cannot be determined.
+std::filesystem::path projectRoot() {
+    std::filesystem::path exe;
+#ifdef _WIN32
+    wchar_t buf[MAX_PATH];
+    const DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return ".";
+    exe = std::filesystem::path(buf);
+#else
+    std::error_code ec;
+    exe = std::filesystem::read_symlink("/proc/self/exe", ec);
+    if (ec) return ".";
+#endif
+    const std::filesystem::path dir = exe.parent_path();
+    const std::string name = dir.filename().string();
+    if (name.rfind("build", 0) == 0) return dir.parent_path();
+    return dir;
+}
+
 // Prints an error. `line` is the statement's starting line in the script
 // (0 = unknown). A positioned message `L:C: ...` (relative to the statement)
 // is rewritten as an absolute position in the script.
@@ -119,6 +142,9 @@ bool runOne(const Console& con, Database& db, std::string_view sql, std::size_t 
     }
     std::cout << formatTable(r.value(), con.style) << con.paint(ansi::dim, formatSummary(r.value()))
               << '\n';
+    if (r.value().kind == ResultKind::Select && r.value().rows.empty()) {
+        std::cout << con.paint(ansi::dim, "no rows matched") << '\n';
+    }
     printWarnings(con, db);
     return true;
 }
@@ -132,12 +158,20 @@ bool dotCommand(const Console& con, Database& db, const std::string& line, bool&
     if (cmd == ".quit" || cmd == ".exit") {
         quit = true;
     } else if (cmd == ".tables") {
-        for (const auto name : db.catalog().tableNames()) std::cout << name << '\n';
+        const auto names = db.catalog().tableNames();
+        if (names.empty()) std::cout << con.paint(ansi::dim, "no tables yet (CREATE TABLE ... to add one)") << '\n';
+        for (const auto name : names) std::cout << name << '\n';
     } else if (cmd == ".views") {
-        for (const auto name : db.catalog().viewNames()) std::cout << name << '\n';
+        const auto names = db.catalog().viewNames();
+        if (names.empty()) std::cout << con.paint(ansi::dim, "no views yet (CREATE VIEW ... AS SELECT ... to add one)") << '\n';
+        for (const auto name : names) std::cout << name << '\n';
     } else if (cmd == ".schema") {
-        const TableSchema* t = arg.empty() ? nullptr : db.catalog().find(arg);
-        const ViewEntry* v = arg.empty() ? nullptr : db.catalog().findView(arg);
+        if (arg.empty()) {
+            std::cerr << con.paint(ansi::red, "error") << ": usage: .schema <table-or-view>\n";
+            return true;
+        }
+        const TableSchema* t = db.catalog().find(arg);
+        const ViewEntry* v = db.catalog().findView(arg);
         if (v) {
             std::cout << con.paint(ansi::cyan, "CREATE VIEW") << ' ' << v->def.name << ' '
                       << con.paint(ansi::cyan, "AS") << ' ' << v->def.sql << ";\n";
@@ -212,7 +246,7 @@ int main(int argc, char** argv) {
                      "  a bare name is stored under data/ (or $LEDGER_DATA_DIR)\n";
         return 2;
     }
-    auto db = Database::open(resolveDatabasePath(argv[1], std::getenv("LEDGER_DATA_DIR")));
+    auto db = Database::open(resolveDatabasePath(argv[1], std::getenv("LEDGER_DATA_DIR"), projectRoot()));
     if (!db.ok()) {
         printError(con, db.error());
         return 1;
