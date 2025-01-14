@@ -34,6 +34,7 @@ target_link_libraries(ledger_sql PUBLIC ledger_core)
 # ---- semantic ---------------------------------------------------------------
 add_library(ledger_semantic
   src/semantic/binder.cpp
+  src/semantic/bound.cpp
   src/semantic/catalog.cpp
   src/semantic/eval.cpp
 )
