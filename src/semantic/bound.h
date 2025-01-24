@@ -73,16 +73,21 @@ struct BoundInsert {
     Row row;  // complete, in schema order, types already conforming
 };
 
+// Deep copy. Bound expressions are trees of unique_ptr; a view column's
+// expression is cloned every time a query refers to it.
+BoundExprPtr cloneExpr(const BoundExpr& e);
+
 struct BoundOrderBy {
-    std::size_t column;
+    BoundExprPtr expr;  // evaluated on the source row, before projection
     bool descending;
 };
 
 struct BoundSelect {
     const TableSchema* table;
-    std::vector<std::size_t> projection;  // never empty (`*` is expanded)
-    BoundExprPtr where;                   // nullptr = every row; type Bool or Null
-    std::optional<BoundOrderBy> orderBy;
+    std::vector<std::string> columnNames;   // output header, one per projection
+    std::vector<BoundExprPtr> projection;   // never empty (`*` is expanded)
+    BoundExprPtr where;                     // nullptr = every row; type Bool or Null
+    std::vector<BoundOrderBy> orderBy;      // lexicographic, first key first
     std::optional<std::int64_t> limit;
 };
 
