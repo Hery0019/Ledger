@@ -141,38 +141,77 @@ TEST_CASE("INSERT syntax errors") {
 
 // ---- SELECT ----------------------------------------------------------------
 
-TEST_CASE("SELECT * is an empty column list") {
+TEST_CASE("SELECT * is a star with no items") {
     const auto s = parseAs<Select>("SELECT * FROM t");
-    CHECK(s.columns.empty());
+    CHECK(s.star);
+    CHECK(s.items.empty());
     CHECK(s.table == "t");
     CHECK(s.where == nullptr);
-    CHECK_FALSE(s.orderBy.has_value());
+    CHECK(s.orderBy.empty());
     CHECK_FALSE(s.limit.has_value());
 }
 
 TEST_CASE("SELECT with explicit columns") {
     const auto s = parseAs<Select>("SELECT A, b, C FROM T");
-    REQUIRE(s.columns.size() == 3);
-    CHECK(s.columns[0] == "a");
-    CHECK(s.columns[1] == "b");
-    CHECK(s.columns[2] == "c");
+    CHECK_FALSE(s.star);
+    REQUIRE(s.items.size() == 3);
+    CHECK(show(*s.items[0].expr) == "a");
+    CHECK(show(*s.items[1].expr) == "b");
+    CHECK(show(*s.items[2].expr) == "c");
+    CHECK(s.items[0].alias.empty());
     CHECK(s.table == "t");
+}
+
+TEST_CASE("SELECT items are expressions with optional aliases") {
+    const auto s = parseAs<Select>("SELECT a + 1 AS Total, b * 2 dbl, -c, 'x' FROM t");
+    REQUIRE(s.items.size() == 4);
+    CHECK(show(*s.items[0].expr) == "(a + 1)");
+    CHECK(s.items[0].alias == "total");  // folded like any identifier
+    CHECK(show(*s.items[1].expr) == "(b * 2)");
+    CHECK(s.items[1].alias == "dbl");    // alias without AS
+    CHECK(show(*s.items[2].expr) == "(- c)");
+    CHECK(s.items[2].alias.empty());
+    CHECK(show(*s.items[3].expr) == "'x'");
 }
 
 TEST_CASE("SELECT with every clause") {
     const auto s = parseAs<Select>("SELECT a FROM t WHERE a > 1 ORDER BY B DESC LIMIT 10;");
     REQUIRE(s.where != nullptr);
     CHECK(show(*s.where) == "(a > 1)");
-    REQUIRE(s.orderBy.has_value());
-    CHECK(s.orderBy->column == "b");
-    CHECK(s.orderBy->descending);
+    REQUIRE(s.orderBy.size() == 1);
+    CHECK(show(*s.orderBy[0].expr) == "b");
+    CHECK(s.orderBy[0].descending);
     REQUIRE(s.limit.has_value());
     CHECK(*s.limit == 10);
 }
 
-TEST_CASE("ORDER BY defaults to ascending; ASC is accepted") {
-    CHECK_FALSE(parseAs<Select>("SELECT * FROM t ORDER BY a").orderBy->descending);
-    CHECK_FALSE(parseAs<Select>("SELECT * FROM t ORDER BY a ASC").orderBy->descending);
+TEST_CASE("ORDER BY takes a list of expressions, ascending by default") {
+    CHECK_FALSE(parseAs<Select>("SELECT * FROM t ORDER BY a").orderBy[0].descending);
+    CHECK_FALSE(parseAs<Select>("SELECT * FROM t ORDER BY a ASC").orderBy[0].descending);
+    const auto s = parseAs<Select>("SELECT * FROM t ORDER BY a DESC, b + 1, c ASC");
+    REQUIRE(s.orderBy.size() == 3);
+    CHECK(s.orderBy[0].descending);
+    CHECK(show(*s.orderBy[1].expr) == "(b + 1)");
+    CHECK_FALSE(s.orderBy[1].descending);
+    CHECK(show(*s.orderBy[2].expr) == "c");
+}
+
+TEST_CASE("exprToString renders expressions with minimal parentheses") {
+    auto text = [](std::string_view e) { return ast::exprToString(*expr(e)); };
+    CHECK(text("a + 1") == "a + 1");
+    CHECK(text("a + b * c") == "a + b * c");
+    CHECK(text("(a + b) * c") == "(a + b) * c");
+    CHECK(text("a - (b - c)") == "a - (b - c)");
+    CHECK(text("a - b - c") == "a - b - c");
+    CHECK(text("-a * b") == "-a * b");
+    CHECK(text("-(a + b)") == "-(a + b)");
+    CHECK(text("NOT a AND b") == "NOT a AND b");
+    CHECK(text("NOT (a AND b)") == "NOT (a AND b)");
+    CHECK(text("a IS NOT NULL") == "a IS NOT NULL");
+    CHECK(text("a + 1 IS NULL") == "a + 1 IS NULL");  // IS binds looser than +
+    CHECK(text("(a IS NULL) = b") == "(a IS NULL) = b");
+    CHECK(text("'it''s'") == "'it''s'");
+    CHECK(text("TRUE OR x = 2.5") == "true OR x = 2.5");
 }
 
 TEST_CASE("LIMIT accepts only a non-negative integer literal") {
@@ -185,8 +224,9 @@ TEST_CASE("LIMIT accepts only a non-negative integer literal") {
 }
 
 TEST_CASE("SELECT syntax errors") {
-    CHECK(errorOf("SELECT FROM t") == "1:8: expected identifier, got 'FROM'");
-    CHECK(errorOf("SELECT a b FROM t") == "1:10: expected 'FROM', got identifier 'b'");
+    CHECK(errorOf("SELECT FROM t") == "1:8: expected expression, got 'FROM'");
+    CHECK(errorOf("SELECT a b c FROM t") == "1:12: expected 'FROM', got identifier 'c'");
+    CHECK(errorOf("SELECT a AS FROM t") == "1:13: expected identifier, got 'FROM'");
     CHECK(errorOf("SELECT *, a FROM t") == "1:9: expected 'FROM', got ','");
     CHECK(errorOf("SELECT * FROM") == "1:14: expected identifier, got 'end of input'");
     CHECK(errorOf("SELECT * FROM t WHERE") == "1:22: expected expression, got 'end of input'");

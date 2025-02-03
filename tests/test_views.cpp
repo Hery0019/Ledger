@@ -70,7 +70,8 @@ TEST_CASE("parse CREATE VIEW keeps the SELECT verbatim, without the trailing ;")
     CHECK(v->name == "v");
     CHECK(v->queryText == "SELECT a, b FROM t WHERE a > 1");
     CHECK(v->query.table == "t");
-    CHECK(v->query.columns == std::vector<std::string>{"a", "b"});
+    REQUIRE(v->query.items.size() == 2);
+    CHECK(std::get<ast::ColumnRef>(v->query.items[1].expr->node).name == "b");
     REQUIRE(v->query.where != nullptr);
 
     r = parse("create view V as select * from T");
@@ -172,11 +173,11 @@ TEST_CASE("columns hidden by the view are not reachable") {
     Db db = seeded();
     auto e = db.fail("SELECT active FROM active_users");
     CHECK(e.code == ErrorCode::NotFound);
-    CHECK(e.message == "unknown column 'active' in view 'active_users'");
+    CHECK(e.message == "1:8: unknown column 'active' in view 'active_users'");
     CHECK(db.fail("SELECT id FROM active_users WHERE active").message ==
           "1:35: unknown column 'active' in view 'active_users'");
     CHECK(db.fail("SELECT id FROM active_users ORDER BY active").message ==
-          "unknown column 'active' in view 'active_users'");
+          "1:38: unknown column 'active' in view 'active_users'");
 }
 
 TEST_CASE("a view over a view composes filters and projections") {
@@ -185,7 +186,7 @@ TEST_CASE("a view over a view composes filters and projections") {
     const auto r = db.run("SELECT * FROM top ORDER BY name");
     CHECK(r.columns == std::vector<std::string>{"name"});
     CHECK(column(r.rows, 0) == std::vector<Value>{t("alice"), t("dave")});
-    CHECK(db.fail("SELECT id FROM top").message == "unknown column 'id' in view 'top'");
+    CHECK(db.fail("SELECT id FROM top").message == "1:8: unknown column 'id' in view 'top'");
 }
 
 TEST_CASE("a view without a filter or projection is a plain alias") {
@@ -194,6 +195,22 @@ TEST_CASE("a view without a filter or projection is a plain alias") {
     const auto r = db.run("SELECT * FROM everyone WHERE NOT active");
     CHECK(r.columns == std::vector<std::string>{"id", "name", "score", "active"});
     CHECK(column(r.rows, 1) == std::vector<Value>{t("bob")});
+}
+
+TEST_CASE("a view may expose computed, aliased columns") {
+    Db db = seeded();
+    db.run("CREATE VIEW scored AS SELECT id, score * 2 AS dbl, name FROM users WHERE score IS NOT NULL");
+    const auto r = db.run("SELECT dbl, name FROM scored WHERE dbl > 5 ORDER BY dbl DESC");
+    CHECK(r.columns == std::vector<std::string>{"dbl", "name"});
+    REQUIRE(r.rows.size() == 2);
+    CHECK(r.rows[0] == Row{f(18.0), t("dave")});
+    CHECK(r.rows[1] == Row{f(7.0), t("alice")});
+    // A computed column without alias cannot be referenced later: refused.
+    auto e = db.fail("CREATE VIEW bad AS SELECT id, score * 2 FROM users");
+    CHECK(e.code == ErrorCode::SyntaxError);
+    CHECK(e.message == "view 'bad': column 2 (score * 2) needs an alias (use AS)");
+    e = db.fail("CREATE VIEW bad AS SELECT id, name AS id FROM users");
+    CHECK(e.message == "view 'bad': duplicate column name 'id'");
 }
 
 TEST_CASE("a view reflects later changes to its table") {
@@ -211,7 +228,7 @@ TEST_CASE("CREATE VIEW validates its SELECT against the catalog") {
     CHECK(e.code == ErrorCode::NotFound);
     CHECK(e.message == "unknown table or view 'nope'");
     e = db.fail("CREATE VIEW v AS SELECT nope FROM users");
-    CHECK(e.message == "unknown column 'nope' in table 'users'");
+    CHECK(e.message == "1:25: unknown column 'nope' in table 'users'");
     e = db.fail("CREATE VIEW v AS SELECT id FROM users WHERE name + 1 > 0");
     CHECK(e.code == ErrorCode::TypeError);
     CHECK(db.catalog.findView("v") == nullptr);  // nothing registered
