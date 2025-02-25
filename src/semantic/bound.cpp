@@ -2,6 +2,17 @@
 
 namespace ledger {
 
+std::string_view aggFuncName(AggFunc f) noexcept {
+    switch (f) {
+        case AggFunc::Count: return "count";
+        case AggFunc::Sum:   return "sum";
+        case AggFunc::Avg:   return "avg";
+        case AggFunc::Min:   return "min";
+        case AggFunc::Max:   return "max";
+    }
+    return "?";
+}
+
 BoundExprPtr cloneExpr(const BoundExpr& e) {
     auto node = std::visit(
         [](const auto& n) -> decltype(BoundExpr::node) {
