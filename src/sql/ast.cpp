@@ -51,7 +51,7 @@ int precedence(const Expr& e) {
             } else if constexpr (std::is_same_v<N, IsNull>) {
                 return 4;
             } else {
-                return 8;
+                return 8;  // Literal, ColumnRef, Call
             }
         },
         e.node);
@@ -91,9 +91,18 @@ void render(const Expr& e, std::string& out, int parentPrecedence) {
                 // Left-associative: the right operand needs parentheses at
                 // the same level (`a - (b - c)`).
                 render(*n.rhs, out, mine + 1);
-            } else {
+            } else if constexpr (std::is_same_v<N, IsNull>) {
                 render(*n.operand, out, mine + 1);
                 out += n.negated ? " IS NOT NULL" : " IS NULL";
+            } else {
+                out += n.name;
+                out += '(';
+                if (n.star) out += '*';
+                for (std::size_t i = 0; i < n.args.size(); ++i) {
+                    if (i) out += ", ";
+                    render(*n.args[i], out, 0);
+                }
+                out += ')';
             }
         },
         e.node);
