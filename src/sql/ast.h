@@ -62,8 +62,16 @@ struct IsNull {
     bool negated;
 };
 
+// Function call: `count(*)`, `sum(x)`, `upper(name)`. Aggregates and scalar
+// functions share this node; the binder tells them apart by name.
+struct Call {
+    std::string name;  // lowercase
+    std::vector<ExprPtr> args;
+    bool star;  // `count(*)`: no argument, counts rows
+};
+
 struct Expr {
-    std::variant<Literal, ColumnRef, Unary, Binary, IsNull> node;
+    std::variant<Literal, ColumnRef, Unary, Binary, IsNull, Call> node;
     // Position of the expression's first token, for binder error messages.
     std::size_t line;
     std::size_t column;
@@ -111,6 +119,8 @@ struct Select {
     std::vector<SelectItem> items;  // empty when star
     std::string table;
     ExprPtr where;  // nullptr if absent
+    std::vector<ExprPtr> groupBy;   // empty if absent
+    ExprPtr having;                 // nullptr if absent
     std::vector<OrderBy> orderBy;   // empty if absent
     std::optional<std::int64_t> limit;  // >= 0 if present
 };
