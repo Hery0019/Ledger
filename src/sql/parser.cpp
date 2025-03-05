@@ -178,6 +178,10 @@ private:
             return makeError(ErrorCode::SyntaxError,
                              "view '" + name + "': ORDER BY and LIMIT are not allowed in a view");
         }
+        if (!query.groupBy.empty() || query.having) {
+            return makeError(ErrorCode::SyntaxError,
+                             "view '" + name + "': GROUP BY and HAVING are not allowed in a view");
+        }
         return Statement{CreateView{std::move(name), std::move(query), std::move(text)}};
     }
 
@@ -216,6 +220,7 @@ private:
     }
 
     // SELECT (* | item {, item}) FROM name [WHERE expr]
+    //        [GROUP BY expr {, expr}] [HAVING expr]
     //        [ORDER BY expr [ASC|DESC] {, expr [ASC|DESC]}] [LIMIT n]
     // item := expr [[AS] alias]
     Result<Statement> select() {
@@ -242,6 +247,18 @@ private:
 
         LEDGER_TRY(where, optionalWhere());
         s.where = std::move(where);
+
+        if (accept(TokenKind::KwGroup)) {
+            LEDGER_TRY_VOID(expect(TokenKind::KwBy));
+            do {
+                LEDGER_TRY(e, expression());
+                s.groupBy.push_back(std::move(e));
+            } while (accept(TokenKind::Comma));
+        }
+        if (accept(TokenKind::KwHaving)) {
+            LEDGER_TRY(e, expression());
+            s.having = std::move(e);
+        }
 
         if (accept(TokenKind::KwOrder)) {
             LEDGER_TRY_VOID(expect(TokenKind::KwBy));
@@ -413,7 +430,22 @@ private:
             case TokenKind::KwTrue:  advance(); return make(Literal{Value::boolean(true)}, tok);
             case TokenKind::KwFalse: advance(); return make(Literal{Value::boolean(false)}, tok);
             case TokenKind::KwNull:  advance(); return make(Literal{Value::null()}, tok);
-            case TokenKind::Identifier: advance(); return make(ColumnRef{tok.text}, tok);
+            case TokenKind::Identifier: {
+                advance();
+                if (!accept(TokenKind::LParen)) return make(ColumnRef{tok.text}, tok);
+                // name( * ) | name( [expr {, expr}] )
+                Call call{tok.text, {}, false};
+                if (accept(TokenKind::Star)) {
+                    call.star = true;
+                } else if (!at(TokenKind::RParen)) {
+                    do {
+                        LEDGER_TRY(arg, expression());
+                        call.args.push_back(std::move(arg));
+                    } while (accept(TokenKind::Comma));
+                }
+                LEDGER_TRY_VOID(expect(TokenKind::RParen));
+                return make(std::move(call), tok);
+            }
             case TokenKind::LParen: {
                 advance();
                 LEDGER_TRY(inner, expression());
