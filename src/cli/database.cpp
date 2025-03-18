@@ -27,8 +27,9 @@ Result<std::unique_ptr<Database>> Database::open(const std::filesystem::path& di
                                  (parsed.ok() ? std::string("definition is not a SELECT")
                                               : parsed.error().message));
         }
-        std::string source = query->table;
-        LEDGER_TRY_VOID(db->catalog_.addView(std::move(v), std::move(source)));
+        std::vector<std::string> sources{query->from.name};
+        for (const auto& j : query->joins) sources.push_back(j.table.name);
+        LEDGER_TRY_VOID(db->catalog_.addView(std::move(v), std::move(sources)));
     }
     return db;
 }
