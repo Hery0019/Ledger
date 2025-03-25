@@ -82,6 +82,59 @@ struct BoundOrderBy {
     bool descending;
 };
 
+// ---- relations -------------------------------------------------------------
+//
+// A bound FROM clause is a small tree of relational operators that the
+// executor materializes into rows. Views are sub-trees, so they work on
+// either side of a join without special cases.
+//
+//   Scan    : the live rows of one table
+//   Filter  : keeps the input rows whose predicate is true
+//   Project : one expression per output column, evaluated on the input row
+//   Join    : left row ++ right row for every pair satisfying `on`; a LEFT
+//             join also emits left ++ NULLs for a left row with no match
+//
+// Every expression inside a node indexes the row of the node's input(s); a
+// join's `on` indexes the concatenated row.
+
+struct BoundRelation;
+using BoundRelationPtr = std::unique_ptr<BoundRelation>;
+
+// An output column of a relation: how queries refer to it, and its type.
+struct RelColumn {
+    std::string qualifier;  // table alias or view alias
+    std::string name;
+    DataType type;
+};
+
+struct RelScan {
+    const TableSchema* table;
+};
+
+struct RelFilter {
+    BoundRelationPtr input;
+    BoundExprPtr predicate;
+};
+
+struct RelProject {
+    BoundRelationPtr input;
+    std::vector<BoundExprPtr> exprs;
+};
+
+enum class JoinKind { Inner, Left };
+
+struct RelJoin {
+    JoinKind kind;
+    BoundRelationPtr left;
+    BoundRelationPtr right;
+    BoundExprPtr on;  // Bool or Null, over left ++ right
+};
+
+struct BoundRelation {
+    std::variant<RelScan, RelFilter, RelProject, RelJoin> node;
+    std::vector<RelColumn> columns;  // output layout; the row width
+};
+
 enum class AggFunc { Count, Sum, Avg, Min, Max };
 
 std::string_view aggFuncName(AggFunc f) noexcept;
@@ -105,7 +158,7 @@ struct BoundAggregate {
 // the source row. Without GROUP BY, every row is one group (an empty source
 // still yields one group: COUNT(*) = 0, other aggregates NULL).
 struct BoundSelect {
-    const TableSchema* table;
+    BoundRelationPtr relation;              // the FROM clause (tables, views, joins)
     std::vector<std::string> columnNames;   // output header, one per projection
     std::vector<BoundExprPtr> projection;   // never empty (`*` is expanded)
     BoundExprPtr where;                     // nullptr = every row; type Bool or Null
@@ -130,8 +183,8 @@ struct BoundDelete {
 };
 
 struct BoundCreateView {
-    ViewDef def;         // validated: the SELECT binds against the current catalog
-    std::string source;  // table or view it reads from
+    ViewDef def;                       // validated: the SELECT binds against the current catalog
+    std::vector<std::string> sources;  // tables and views it reads from (FROM and JOINs)
 };
 
 struct BoundDropView {
