@@ -41,6 +41,7 @@ struct Literal {
 };
 
 struct ColumnRef {
+    std::string qualifier;  // table alias, empty when unqualified
     std::string name;
 };
 
@@ -105,8 +106,23 @@ struct Insert {
 // `alias` is empty when none was given; the binder then names the column
 // after the expression (a bare column keeps its name).
 struct SelectItem {
-    ExprPtr expr;
+    ExprPtr expr;         // nullptr for `t.*`
     std::string alias;
+    std::string starOf;   // `t.*`: the qualifier; empty otherwise
+};
+
+// A table or view in FROM, with its alias (defaults to the name).
+struct TableRef {
+    std::string name;
+    std::string alias;
+};
+
+enum class JoinKind { Inner, Left };
+
+struct Join {
+    JoinKind kind;
+    TableRef table;
+    ExprPtr on;
 };
 
 struct OrderBy {
@@ -117,7 +133,8 @@ struct OrderBy {
 struct Select {
     bool star;                      // `SELECT *`
     std::vector<SelectItem> items;  // empty when star
-    std::string table;
+    TableRef from;
+    std::vector<Join> joins;        // applied left to right
     ExprPtr where;  // nullptr if absent
     std::vector<ExprPtr> groupBy;   // empty if absent
     ExprPtr having;                 // nullptr if absent

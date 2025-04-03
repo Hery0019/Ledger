@@ -14,7 +14,7 @@ struct KeywordEntry {
     TokenKind kind;
 };
 
-constexpr std::array<KeywordEntry, 34> kKeywords{{
+constexpr std::array<KeywordEntry, 39> kKeywords{{
     {"select", TokenKind::KwSelect},   {"from", TokenKind::KwFrom},
     {"where", TokenKind::KwWhere},     {"insert", TokenKind::KwInsert},
     {"into", TokenKind::KwInto},       {"values", TokenKind::KwValues},
@@ -32,6 +32,9 @@ constexpr std::array<KeywordEntry, 34> kKeywords{{
     {"primary", TokenKind::KwPrimary}, {"key", TokenKind::KwKey},
     {"view", TokenKind::KwView},       {"as", TokenKind::KwAs},
     {"group", TokenKind::KwGroup},     {"having", TokenKind::KwHaving},
+    {"join", TokenKind::KwJoin},       {"inner", TokenKind::KwInner},
+    {"left", TokenKind::KwLeft},       {"outer", TokenKind::KwOuter},
+    {"on", TokenKind::KwOn},
 }};
 
 // Explicit ASCII classification: we don't want to depend on the locale, and
@@ -196,6 +199,7 @@ private:
             case ',': return Token{TokenKind::Comma, {}, line, column};
             case ';': return Token{TokenKind::Semicolon, {}, line, column};
             case '*': return Token{TokenKind::Star, {}, line, column};
+            case '.': return Token{TokenKind::Dot, {}, line, column};
             case '+': return Token{TokenKind::Plus, {}, line, column};
             case '-': return Token{TokenKind::Minus, {}, line, column};
             case '/': return Token{TokenKind::Slash, {}, line, column};
@@ -266,6 +270,11 @@ std::string_view tokenKindName(TokenKind kind) noexcept {
         case TokenKind::KwAs:       return "AS";
         case TokenKind::KwGroup:    return "GROUP";
         case TokenKind::KwHaving:   return "HAVING";
+        case TokenKind::KwJoin:     return "JOIN";
+        case TokenKind::KwInner:    return "INNER";
+        case TokenKind::KwLeft:     return "LEFT";
+        case TokenKind::KwOuter:    return "OUTER";
+        case TokenKind::KwOn:       return "ON";
         case TokenKind::Identifier: return "identifier";
         case TokenKind::Integer:    return "integer";
         case TokenKind::Float:      return "float";
@@ -275,6 +284,7 @@ std::string_view tokenKindName(TokenKind kind) noexcept {
         case TokenKind::Comma:      return ",";
         case TokenKind::Semicolon:  return ";";
         case TokenKind::Star:       return "*";
+        case TokenKind::Dot:        return ".";
         case TokenKind::Plus:       return "+";
         case TokenKind::Minus:      return "-";
         case TokenKind::Slash:      return "/";
