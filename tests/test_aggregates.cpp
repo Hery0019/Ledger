@@ -213,7 +213,7 @@ TEST_CASE("aggregate binding errors") {
     CHECK(db.fail("SELECT * FROM sales GROUP BY region").message ==
           "SELECT * cannot be used with GROUP BY or aggregate functions");
     CHECK(db.fail("SELECT count(*) FROM sales WHERE count(*) > 1").message ==
-          "1:34: aggregate function 'count()' is not allowed here");
+          "1:34: aggregate functions are not allowed in WHERE");
     CHECK(db.fail("UPDATE sales SET qty = max(qty)").message ==
           "1:24: aggregate function 'max()' is not allowed here");
     CHECK(db.fail("SELECT sum(count(*)) FROM sales").message == "1:8: aggregate functions cannot be nested");

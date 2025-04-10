@@ -166,7 +166,7 @@ std::size_t columnIndex(const BoundExprPtr& e) {
 TEST_CASE("bind SELECT * expands the projection") {
     const Catalog cat = catalog();
     const auto s = bindAs<BoundSelect>("SELECT * FROM users", cat);
-    CHECK(s.table == cat.find("users"));
+    CHECK(std::get<RelScan>(s.relation->node).table == cat.find("users"));
     CHECK(s.columnNames == std::vector<std::string>{"id", "name", "score", "active"});
     REQUIRE(s.projection.size() == 4);
     for (std::size_t i = 0; i < 4; ++i) CHECK(columnIndex(s.projection[i]) == i);
