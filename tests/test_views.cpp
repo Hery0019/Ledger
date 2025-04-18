@@ -69,7 +69,7 @@ TEST_CASE("parse CREATE VIEW keeps the SELECT verbatim, without the trailing ;")
     REQUIRE(v != nullptr);
     CHECK(v->name == "v");
     CHECK(v->queryText == "SELECT a, b FROM t WHERE a > 1");
-    CHECK(v->query.table == "t");
+    CHECK(v->query.from.name == "t");
     REQUIRE(v->query.items.size() == 2);
     CHECK(std::get<ast::ColumnRef>(v->query.items[1].expr->node).name == "b");
     REQUIRE(v->query.where != nullptr);
@@ -126,15 +126,15 @@ TEST_CASE("tokens carry their byte offset") {
 TEST_CASE("Catalog: views share the table namespace and track their source") {
     Catalog c;
     REQUIRE(c.add(TableSchema{"t", {ColumnSchema{"a", DataType::Int, false, false}}}).ok());
-    REQUIRE(c.addView(ViewDef{"v", "SELECT * FROM t"}, "t").ok());
-    REQUIRE(c.addView(ViewDef{"w", "SELECT * FROM v"}, "v").ok());
+    REQUIRE(c.addView(ViewDef{"v", "SELECT * FROM t"}, {"t"}).ok());
+    REQUIRE(c.addView(ViewDef{"w", "SELECT * FROM v"}, {"v"}).ok());
 
     CHECK(c.hasName("t"));
     CHECK(c.hasName("v"));
     CHECK_FALSE(c.hasName("nope"));
     CHECK(c.find("v") == nullptr);  // a view is not a table
     REQUIRE(c.findView("v") != nullptr);
-    CHECK(c.findView("v")->source == "t");
+    CHECK(c.findView("v")->sources == std::vector<std::string>{"t"});
     CHECK(c.viewNames() == std::vector<std::string_view>{"v", "w"});  // creation order
     CHECK(c.dependents("t") == std::vector<std::string_view>{"v"});
     CHECK(c.dependents("v") == std::vector<std::string_view>{"w"});
@@ -142,8 +142,8 @@ TEST_CASE("Catalog: views share the table namespace and track their source") {
 
     CHECK(c.add(TableSchema{"v", {ColumnSchema{"a", DataType::Int, false, false}}}).error().code ==
           ErrorCode::AlreadyExists);
-    CHECK(c.addView(ViewDef{"t", "SELECT * FROM t"}, "t").error().message == "table 't' already exists");
-    CHECK(c.addView(ViewDef{"v", "SELECT * FROM t"}, "t").error().message == "view 'v' already exists");
+    CHECK(c.addView(ViewDef{"t", "SELECT * FROM t"}, {"t"}).error().message == "table 't' already exists");
+    CHECK(c.addView(ViewDef{"v", "SELECT * FROM t"}, {"t"}).error().message == "view 'v' already exists");
     CHECK(c.removeView("nope").error().code == ErrorCode::NotFound);
     REQUIRE(c.removeView("w").ok());
     CHECK(c.views().size() == 1);
