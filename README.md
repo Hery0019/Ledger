@@ -20,7 +20,9 @@ meant for personal use afterwards.
   queried like a table (with its own WHERE / ORDER BY / LIMIT) and is
   read-only. `ORDER BY` and `LIMIT` are not allowed inside a view definition.
   Dropping a table or view that another view reads from is refused.
+- `SELECT DISTINCT ...`, `LIMIT n OFFSET m`.
 - Expressions: `+ - * /`, comparisons, `AND OR NOT`, `IS [NOT] NULL`,
+  `[NOT] IN (...)`, `[NOT] BETWEEN a AND b`, `[NOT] LIKE 'pattern'` (`%`, `_`),
   SQL three-valued logic. Case-insensitive identifiers.
 - No joins, indexes or transactions.
 
