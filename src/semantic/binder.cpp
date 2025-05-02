@@ -56,11 +56,27 @@ bool containsAggregate(const ast::Expr& e) {
                 return containsAggregate(*n.lhs) || containsAggregate(*n.rhs);
             } else if constexpr (std::is_same_v<N, ast::IsNull>) {
                 return containsAggregate(*n.operand);
+            } else if constexpr (std::is_same_v<N, ast::InList>) {
+                if (containsAggregate(*n.value)) return true;
+                for (const auto& item : n.items) {
+                    if (containsAggregate(*item)) return true;
+                }
+                return false;
+            } else if constexpr (std::is_same_v<N, ast::Between>) {
+                return containsAggregate(*n.value) || containsAggregate(*n.low) || containsAggregate(*n.high);
+            } else if constexpr (std::is_same_v<N, ast::Like>) {
+                return containsAggregate(*n.value) || containsAggregate(*n.pattern);
             } else {
                 return false;
             }
         },
         e.node);
+}
+
+// Types that `=` accepts between each other (see bindBinary).
+bool comparable(DataType a, DataType b) noexcept {
+    return a == DataType::Null || b == DataType::Null || a == b ||
+           (isNumeric(a) && isNumeric(b));
 }
 
 // Column scope of an expression: the output columns of a relation. nullptr
@@ -306,6 +322,8 @@ private:
 
         BoundSelect out;
         out.limit = s.limit;
+        out.offset = s.offset;
+        out.distinct = s.distinct;
 
         // WHERE runs on the relation's rows, before any grouping.
         LEDGER_TRY(where, bindWhere(s.where, scope));
@@ -613,11 +631,74 @@ private:
                 } else if constexpr (std::is_same_v<N, ast::IsNull>) {
                     LEDGER_TRY(operand, bindExpr(*n.operand, scope, group));
                     return make(BoundIsNull{std::move(operand), n.negated}, DataType::Bool);
+                } else if constexpr (std::is_same_v<N, ast::InList>) {
+                    return bindInList(e, n, scope, group);
+                } else if constexpr (std::is_same_v<N, ast::Between>) {
+                    return bindBetween(e, n, scope, group);
+                } else if constexpr (std::is_same_v<N, ast::Like>) {
+                    return bindLike(e, n, scope, group);
                 } else {
                     return bindCall(e, n, group);
                 }
             },
             e.node);
+    }
+
+    Result<BoundExprPtr> bindInList([[maybe_unused]] const ast::Expr& e, const ast::InList& in, const Scope* scope,
+                                    GroupContext* group) {
+        LEDGER_TRY(value, bindExpr(*in.value, scope, group));
+        BoundInList out{std::move(value), {}, in.negated};
+        for (const auto& item : in.items) {
+            LEDGER_TRY(x, bindExpr(*item, scope, group));
+            if (!comparable(out.value->type, x->type)) {
+                return errorAt(*item, ErrorCode::TypeError,
+                               "cannot compare " + typeName(out.value->type) + " with " + typeName(x->type) +
+                                   " in IN list");
+            }
+            out.items.push_back(std::move(x));
+        }
+        const DataType type = out.value->type == DataType::Null ? DataType::Null : DataType::Bool;
+        return make(std::move(out), type);
+    }
+
+    // `x BETWEEN lo AND hi` is exactly `x >= lo AND x <= hi` (x evaluated
+    // twice; fine, expressions are pure). NOT BETWEEN wraps it in NOT.
+    Result<BoundExprPtr> bindBetween(const ast::Expr& e, const ast::Between& b, const Scope* scope,
+                                     GroupContext* group) {
+        LEDGER_TRY(value, bindExpr(*b.value, scope, group));
+        LEDGER_TRY(low, bindExpr(*b.low, scope, group));
+        LEDGER_TRY(high, bindExpr(*b.high, scope, group));
+        for (const auto* bound : {&low, &high}) {
+            if (!comparable(value->type, (*bound)->type)) {
+                return errorAt(e, ErrorCode::TypeError,
+                               "cannot compare " + typeName(value->type) + " with " +
+                                   typeName((*bound)->type) + " in BETWEEN");
+            }
+        }
+        const bool anyNull = value->type == DataType::Null && low->type == DataType::Null &&
+                             high->type == DataType::Null;
+        const DataType type = anyNull ? DataType::Null : DataType::Bool;
+        auto ge = make(BoundBinary{BinaryOp::GtEq, cloneExpr(*value), std::move(low)}, type);
+        auto le = make(BoundBinary{BinaryOp::LtEq, std::move(value), std::move(high)}, type);
+        auto both = make(BoundBinary{BinaryOp::And, std::move(ge), std::move(le)}, type);
+        if (!b.negated) return both;
+        return make(BoundUnary{UnaryOp::Not, std::move(both)}, type);
+    }
+
+    Result<BoundExprPtr> bindLike(const ast::Expr& e, const ast::Like& l, const Scope* scope,
+                                  GroupContext* group) {
+        LEDGER_TRY(value, bindExpr(*l.value, scope, group));
+        LEDGER_TRY(pattern, bindExpr(*l.pattern, scope, group));
+        for (const auto* side : {&value, &pattern}) {
+            const DataType t = (*side)->type;
+            if (t != DataType::Text && t != DataType::Null) {
+                return errorAt(e, ErrorCode::TypeError, "LIKE requires TEXT, got " + typeName(t));
+            }
+        }
+        const DataType type = (value->type == DataType::Null || pattern->type == DataType::Null)
+                                  ? DataType::Null
+                                  : DataType::Bool;
+        return make(BoundLike{std::move(value), std::move(pattern), l.negated}, type);
     }
 
     Result<BoundExprPtr> bindColumn(const ast::Expr& e, const ast::ColumnRef& c, const Scope* scope,
