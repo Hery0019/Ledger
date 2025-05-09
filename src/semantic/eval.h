@@ -20,8 +20,13 @@ namespace ledger {
 //  - arithmetic, comparison, negation: NULL if an operand is NULL;
 //  - AND: false if an operand is false, else NULL if one is NULL, else true;
 //  - OR: true if an operand is true, else NULL if one is NULL, else false;
-//  - NOT NULL = NULL; x IS NULL is always a real boolean.
+//  - NOT NULL = NULL; x IS NULL is always a real boolean;
+//  - x IN (...) : NULL if x is NULL, or if nothing matches and an item is NULL;
+//  - x LIKE p   : NULL if either side is NULL.
 Result<Value> eval(const BoundExpr& expr, const Row& row);
+
+// SQL LIKE matching (`%`, `_`), exposed for tests.
+[[nodiscard]] bool likeMatch(std::string_view text, std::string_view pattern);
 
 // True if the expression references no column (so it can be evaluated
 // without a row).

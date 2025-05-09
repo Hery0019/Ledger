@@ -138,6 +138,58 @@ Result<Value> evalBinary(const BoundBinary& b, const Row& row) {
     return floatArith(b.op, toDouble(l), toDouble(r));
 }
 
+}  // namespace
+
+// SQL LIKE: `%` matches any sequence, `_` any single character; everything
+// else matches itself, byte for byte (case-sensitive). Backtracking on `%`
+// only; patterns are short.
+bool likeMatch(std::string_view text, std::string_view pattern) {
+    std::size_t t = 0, p = 0;
+    std::size_t starP = std::string_view::npos, starT = 0;
+    while (t < text.size()) {
+        if (p < pattern.size() && pattern[p] == '%') {
+            starP = p++;
+            starT = t;
+        } else if (p < pattern.size() && (pattern[p] == '_' || pattern[p] == text[t])) {
+            ++p;
+            ++t;
+        } else if (starP != std::string_view::npos) {
+            p = starP + 1;
+            t = ++starT;
+        } else {
+            return false;
+        }
+    }
+    while (p < pattern.size() && pattern[p] == '%') ++p;
+    return p == pattern.size();
+}
+
+namespace {
+
+Result<Value> evalInList(const BoundInList& in, const Row& row) {
+    LEDGER_TRY(v, eval(*in.value, row));
+    if (v.isNull()) return Value::null();
+    bool sawNull = false;
+    for (const auto& item : in.items) {
+        LEDGER_TRY(x, eval(*item, row));
+        if (x.isNull()) {
+            sawNull = true;
+            continue;
+        }
+        LEDGER_TRY(ord, Value::compare(v, x));
+        if (ord == Ordering::Equal) return Value::boolean(!in.negated);
+    }
+    if (sawNull) return Value::null();  // no match, but an unknown item: unknown
+    return Value::boolean(in.negated);
+}
+
+Result<Value> evalLike(const BoundLike& l, const Row& row) {
+    LEDGER_TRY(v, eval(*l.value, row));
+    LEDGER_TRY(p, eval(*l.pattern, row));
+    if (v.isNull() || p.isNull()) return Value::null();
+    return Value::boolean(likeMatch(v.asText(), p.asText()) != l.negated);
+}
+
 Result<Value> evalCast(const BoundCast& c, const Row& row) {
     LEDGER_TRY(v, eval(*c.operand, row));
     if (v.isNull() || v.type() == c.to) return v;
@@ -162,6 +214,10 @@ Result<Value> eval(const BoundExpr& expr, const Row& row) {
             } else if constexpr (std::is_same_v<N, BoundIsNull>) {
                 LEDGER_TRY(v, eval(*n.operand, row));
                 return Value::boolean(v.isNull() != n.negated);
+            } else if constexpr (std::is_same_v<N, BoundInList>) {
+                return evalInList(n, row);
+            } else if constexpr (std::is_same_v<N, BoundLike>) {
+                return evalLike(n, row);
             } else {
                 return evalCast(n, row);
             }
@@ -179,6 +235,14 @@ bool isConstant(const BoundExpr& expr) noexcept {
                 return false;
             } else if constexpr (std::is_same_v<N, BoundBinary>) {
                 return isConstant(*n.lhs) && isConstant(*n.rhs);
+            } else if constexpr (std::is_same_v<N, BoundInList>) {
+                if (!isConstant(*n.value)) return false;
+                for (const auto& item : n.items) {
+                    if (!isConstant(*item)) return false;
+                }
+                return true;
+            } else if constexpr (std::is_same_v<N, BoundLike>) {
+                return isConstant(*n.value) && isConstant(*n.pattern);
             } else {
                 return isConstant(*n.operand);
             }
