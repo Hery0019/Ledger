@@ -14,7 +14,7 @@ struct KeywordEntry {
     TokenKind kind;
 };
 
-constexpr std::array<KeywordEntry, 39> kKeywords{{
+constexpr std::array<KeywordEntry, 44> kKeywords{{
     {"select", TokenKind::KwSelect},   {"from", TokenKind::KwFrom},
     {"where", TokenKind::KwWhere},     {"insert", TokenKind::KwInsert},
     {"into", TokenKind::KwInto},       {"values", TokenKind::KwValues},
@@ -34,7 +34,9 @@ constexpr std::array<KeywordEntry, 39> kKeywords{{
     {"group", TokenKind::KwGroup},     {"having", TokenKind::KwHaving},
     {"join", TokenKind::KwJoin},       {"inner", TokenKind::KwInner},
     {"left", TokenKind::KwLeft},       {"outer", TokenKind::KwOuter},
-    {"on", TokenKind::KwOn},
+    {"on", TokenKind::KwOn},           {"distinct", TokenKind::KwDistinct},
+    {"offset", TokenKind::KwOffset},   {"in", TokenKind::KwIn},
+    {"between", TokenKind::KwBetween}, {"like", TokenKind::KwLike},
 }};
 
 // Explicit ASCII classification: we don't want to depend on the locale, and
@@ -275,6 +277,11 @@ std::string_view tokenKindName(TokenKind kind) noexcept {
         case TokenKind::KwLeft:     return "LEFT";
         case TokenKind::KwOuter:    return "OUTER";
         case TokenKind::KwOn:       return "ON";
+        case TokenKind::KwDistinct: return "DISTINCT";
+        case TokenKind::KwOffset:   return "OFFSET";
+        case TokenKind::KwIn:       return "IN";
+        case TokenKind::KwBetween:  return "BETWEEN";
+        case TokenKind::KwLike:     return "LIKE";
         case TokenKind::Identifier: return "identifier";
         case TokenKind::Integer:    return "integer";
         case TokenKind::Float:      return "float";
