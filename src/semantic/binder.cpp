@@ -1,5 +1,6 @@
 #include "semantic/binder.h"
 
+#include <cstdint>
 #include <set>
 #include <string>
 #include <utility>
@@ -66,11 +67,30 @@ bool containsAggregate(const ast::Expr& e) {
                 return containsAggregate(*n.value) || containsAggregate(*n.low) || containsAggregate(*n.high);
             } else if constexpr (std::is_same_v<N, ast::Like>) {
                 return containsAggregate(*n.value) || containsAggregate(*n.pattern);
+            } else if constexpr (std::is_same_v<N, ast::Case>) {
+                if (n.operand && containsAggregate(*n.operand)) return true;
+                if (n.elseExpr && containsAggregate(*n.elseExpr)) return true;
+                for (const auto& [c, r] : n.whens) {
+                    if (containsAggregate(*c) || containsAggregate(*r)) return true;
+                }
+                return false;
             } else {
                 return false;
             }
         },
         e.node);
+}
+
+std::optional<ScalarFunc> scalarByName(std::string_view name) noexcept {
+    if (name == "upper") return ScalarFunc::Upper;
+    if (name == "lower") return ScalarFunc::Lower;
+    if (name == "length") return ScalarFunc::Length;
+    if (name == "trim") return ScalarFunc::Trim;
+    if (name == "abs") return ScalarFunc::Abs;
+    if (name == "round") return ScalarFunc::Round;
+    if (name == "coalesce") return ScalarFunc::Coalesce;
+    if (name == "nullif") return ScalarFunc::NullIf;
+    return std::nullopt;
 }
 
 // Types that `=` accepts between each other (see bindBinary).
@@ -637,11 +657,144 @@ private:
                     return bindBetween(e, n, scope, group);
                 } else if constexpr (std::is_same_v<N, ast::Like>) {
                     return bindLike(e, n, scope, group);
+                } else if constexpr (std::is_same_v<N, ast::Case>) {
+                    return bindCase(e, n, scope, group);
                 } else {
+                    if (scalarByName(n.name)) return bindScalar(e, n, scope, group);
                     return bindCall(e, n, group);
                 }
             },
             e.node);
+    }
+
+    // Common type of several branches (CASE results, COALESCE arguments):
+    // NULL-typed branches are ignored; numeric branches may mix (-> Float);
+    // anything else must be one single type.
+    Result<DataType> commonType(const ast::Expr& e, const std::vector<DataType>& types, const char* what) {
+        DataType result = DataType::Null;
+        for (const DataType t : types) {
+            if (t == DataType::Null) continue;
+            if (result == DataType::Null) {
+                result = t;
+            } else if (result == t) {
+                continue;
+            } else if (isNumeric(result) && isNumeric(t)) {
+                result = DataType::Float;
+            } else {
+                return errorAt(e, ErrorCode::TypeError,
+                               std::string(what) + " mixes " + typeName(result) + " and " + typeName(t));
+            }
+        }
+        return result;
+    }
+
+    Result<BoundExprPtr> bindScalar(const ast::Expr& e, const ast::Call& call, const Scope* scope,
+                                    GroupContext* group) {
+        const ScalarFunc func = *scalarByName(call.name);
+        if (call.star) return errorAt(e, ErrorCode::SyntaxError, call.name + "(*) is not valid");
+
+        BoundCall bound{func, {}};
+        std::vector<DataType> types;
+        for (const auto& a : call.args) {
+            LEDGER_TRY(x, bindExpr(*a, scope, group));
+            types.push_back(x->type);
+            bound.args.push_back(std::move(x));
+        }
+        const std::size_t n = bound.args.size();
+        auto arity = [&](std::size_t lo, std::size_t hi) -> Result<void> {
+            if (n >= lo && n <= hi) return {};
+            const std::string want = lo == hi ? std::to_string(lo)
+                                     : hi == SIZE_MAX ? "at least " + std::to_string(lo)
+                                                      : std::to_string(lo) + " to " + std::to_string(hi);
+            return errorAt(e, ErrorCode::SyntaxError,
+                           call.name + "() takes " + want + " argument" + (lo == 1 && hi == 1 ? "" : "s") +
+                               ", got " + std::to_string(n));
+        };
+        auto require = [&](std::size_t i, bool ok, const char* what) -> Result<void> {
+            if (ok || types[i] == DataType::Null) return {};
+            return errorAt(e, ErrorCode::TypeError,
+                           call.name + "() requires " + what + ", got " + typeName(types[i]));
+        };
+
+        DataType result = DataType::Null;
+        switch (func) {
+            case ScalarFunc::Upper:
+            case ScalarFunc::Lower:
+            case ScalarFunc::Trim:
+                LEDGER_TRY_VOID(arity(1, 1));
+                LEDGER_TRY_VOID(require(0, types[0] == DataType::Text, "TEXT"));
+                result = types[0] == DataType::Null ? DataType::Null : DataType::Text;
+                break;
+            case ScalarFunc::Length:
+                LEDGER_TRY_VOID(arity(1, 1));
+                LEDGER_TRY_VOID(require(0, types[0] == DataType::Text, "TEXT"));
+                result = types[0] == DataType::Null ? DataType::Null : DataType::Int;
+                break;
+            case ScalarFunc::Abs:
+                LEDGER_TRY_VOID(arity(1, 1));
+                LEDGER_TRY_VOID(require(0, isNumeric(types[0]), "INT or FLOAT"));
+                result = types[0];
+                break;
+            case ScalarFunc::Round:
+                LEDGER_TRY_VOID(arity(1, 2));
+                LEDGER_TRY_VOID(require(0, isNumeric(types[0]), "INT or FLOAT"));
+                if (n == 2) LEDGER_TRY_VOID(require(1, types[1] == DataType::Int, "an INT digit count"));
+                result = types[0] == DataType::Null ? DataType::Null : DataType::Float;
+                break;
+            case ScalarFunc::Coalesce: {
+                LEDGER_TRY_VOID(arity(1, SIZE_MAX));
+                LEDGER_TRY(t, commonType(e, types, "coalesce()"));
+                result = t;
+                break;
+            }
+            case ScalarFunc::NullIf:
+                LEDGER_TRY_VOID(arity(2, 2));
+                if (!comparable(types[0], types[1])) {
+                    return errorAt(e, ErrorCode::TypeError,
+                                   "nullif(): cannot compare " + typeName(types[0]) + " with " + typeName(types[1]));
+                }
+                result = types[0];
+                break;
+        }
+        return make(std::move(bound), result);
+    }
+
+    Result<BoundExprPtr> bindCase(const ast::Expr& e, const ast::Case& c, const Scope* scope,
+                                  GroupContext* group) {
+        BoundExprPtr operand;
+        if (c.operand) {
+            LEDGER_TRY(op, bindExpr(*c.operand, scope, group));
+            operand = std::move(op);
+        }
+        BoundCase bound{{}, nullptr};
+        std::vector<DataType> types;
+        for (const auto& [when, then] : c.whens) {
+            LEDGER_TRY(cond, bindExpr(*when, scope, group));
+            if (operand) {
+                // Simple form: CASE x WHEN a ... is CASE WHEN x = a ...
+                if (!comparable(operand->type, cond->type)) {
+                    return errorAt(*when, ErrorCode::TypeError,
+                                   "cannot compare " + typeName(operand->type) + " with " +
+                                       typeName(cond->type) + " in CASE");
+                }
+                const DataType t = (operand->type == DataType::Null && cond->type == DataType::Null)
+                                       ? DataType::Null
+                                       : DataType::Bool;
+                cond = make(BoundBinary{BinaryOp::Eq, cloneExpr(*operand), std::move(cond)}, t);
+            } else if (cond->type != DataType::Bool && cond->type != DataType::Null) {
+                return errorAt(*when, ErrorCode::TypeError, "WHEN requires BOOL, got " + typeName(cond->type));
+            }
+            LEDGER_TRY(result, bindExpr(*then, scope, group));
+            types.push_back(result->type);
+            bound.whens.emplace_back(std::move(cond), std::move(result));
+        }
+        if (c.elseExpr) {
+            LEDGER_TRY(el, bindExpr(*c.elseExpr, scope, group));
+            types.push_back(el->type);
+            bound.elseExpr = std::move(el);
+        }
+        LEDGER_TRY(type, commonType(e, types, "CASE"));
+        return make(std::move(bound), type);
     }
 
     Result<BoundExprPtr> bindInList([[maybe_unused]] const ast::Expr& e, const ast::InList& in, const Scope* scope,
