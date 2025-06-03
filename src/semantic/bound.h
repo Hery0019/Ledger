@@ -59,6 +59,22 @@ struct BoundInList {
     bool negated;
 };
 
+enum class ScalarFunc { Upper, Lower, Length, Trim, Abs, Round, Coalesce, NullIf };
+
+std::string_view scalarFuncName(ScalarFunc f) noexcept;
+
+// A scalar function call, arguments already type-checked by the binder.
+struct BoundCall {
+    ScalarFunc func;
+    std::vector<BoundExprPtr> args;
+};
+
+// Searched CASE (the simple form is bound as `operand = value` conditions).
+struct BoundCase {
+    std::vector<std::pair<BoundExprPtr, BoundExprPtr>> whens;  // (Bool condition, result)
+    BoundExprPtr elseExpr;  // nullptr = NULL
+};
+
 // `value [NOT] LIKE pattern` over TEXT: `%` any sequence, `_` one character.
 struct BoundLike {
     BoundExprPtr value;
@@ -67,7 +83,9 @@ struct BoundLike {
 };
 
 struct BoundExpr {
-    std::variant<Value, BoundColumn, BoundUnary, BoundBinary, BoundIsNull, BoundCast, BoundInList, BoundLike> node;
+    std::variant<Value, BoundColumn, BoundUnary, BoundBinary, BoundIsNull, BoundCast, BoundInList, BoundLike,
+                 BoundCall, BoundCase>
+        node;
     // Static type. DataType::Null means "always NULL" (e.g. the NULL literal,
     // or NULL + NULL). An expression of type Int can still produce NULL at
     // runtime (nullable column): Null is not a subtype, it is the type of
