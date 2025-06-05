@@ -1,8 +1,10 @@
 #include "semantic/eval.h"
 
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <string>
+#include <vector>
 
 namespace ledger {
 
@@ -190,6 +192,91 @@ Result<Value> evalLike(const BoundLike& l, const Row& row) {
     return Value::boolean(likeMatch(v.asText(), p.asText()) != l.negated);
 }
 
+// ASCII-only case mapping: non-ASCII bytes pass through untouched, so a
+// UTF-8 string is never corrupted (accented letters simply keep their case).
+std::string mapAsciiCase(std::string s, bool upper) {
+    for (char& c : s) {
+        if (upper && c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+        if (!upper && c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    }
+    return s;
+}
+
+// Length in UTF-8 code points, consistent with the CLI's column widths.
+std::int64_t codePoints(std::string_view s) noexcept {
+    std::int64_t n = 0;
+    for (const char ch : s) n += (static_cast<unsigned char>(ch) & 0xC0) != 0x80;
+    return n;
+}
+
+Result<Value> evalCall(const BoundCall& c, const Row& row) {
+    std::vector<Value> args;
+    args.reserve(c.args.size());
+    for (const auto& a : c.args) {
+        LEDGER_TRY(v, eval(*a, row));
+        args.push_back(std::move(v));
+    }
+    // COALESCE / NULLIF have their own NULL rules; every other function is
+    // NULL as soon as an argument is.
+    switch (c.func) {
+        case ScalarFunc::Coalesce:
+            for (auto& v : args) {
+                if (!v.isNull()) return std::move(v);
+            }
+            return Value::null();
+        case ScalarFunc::NullIf: {
+            if (args[0].isNull() || args[1].isNull()) return args[0];
+            LEDGER_TRY(ord, Value::compare(args[0], args[1]));
+            return ord == Ordering::Equal ? Value::null() : args[0];
+        }
+        default:
+            break;
+    }
+    for (const auto& v : args) {
+        if (v.isNull()) return Value::null();
+    }
+    switch (c.func) {
+        case ScalarFunc::Upper:  return Value::text(mapAsciiCase(args[0].asText(), true));
+        case ScalarFunc::Lower:  return Value::text(mapAsciiCase(args[0].asText(), false));
+        case ScalarFunc::Length: return Value::integer(codePoints(args[0].asText()));
+        case ScalarFunc::Trim: {
+            std::string_view s = args[0].asText();
+            while (!s.empty() && (s.front() == ' ' || s.front() == '\t' || s.front() == '\n' || s.front() == '\r')) s.remove_prefix(1);
+            while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\n' || s.back() == '\r')) s.remove_suffix(1);
+            return Value::text(std::string(s));
+        }
+        case ScalarFunc::Abs:
+            if (args[0].type() == DataType::Int) {
+                if (args[0].asInt() == kIntMin) return overflow("abs");
+                return Value::integer(args[0].asInt() < 0 ? -args[0].asInt() : args[0].asInt());
+            }
+            return Value::real(args[0].asFloat() < 0 ? -args[0].asFloat() : args[0].asFloat());
+        case ScalarFunc::Round: {
+            const double x = toDouble(args[0]);
+            const std::int64_t digits = args.size() > 1 ? args[1].asInt() : 0;
+            if (digits < -18 || digits > 18) return makeError(ErrorCode::TypeError, "round(): digits out of range");
+            double scale = 1.0;
+            for (std::int64_t i = 0; i < (digits < 0 ? -digits : digits); ++i) scale *= 10.0;
+            const double scaled = digits >= 0 ? x * scale : x / scale;
+            const double rounded = scaled < 0 ? -std::floor(-scaled + 0.5) : std::floor(scaled + 0.5);
+            return Value::real(digits >= 0 ? rounded / scale : rounded * scale);
+        }
+        case ScalarFunc::Coalesce:
+        case ScalarFunc::NullIf:
+            break;  // handled above
+    }
+    return makeError(ErrorCode::Internal, "evalCall: unknown function");
+}
+
+Result<Value> evalCase(const BoundCase& c, const Row& row) {
+    for (const auto& [cond, result] : c.whens) {
+        LEDGER_TRY(v, eval(*cond, row));
+        if (!v.isNull() && v.asBool()) return eval(*result, row);
+    }
+    if (c.elseExpr) return eval(*c.elseExpr, row);
+    return Value::null();
+}
+
 Result<Value> evalCast(const BoundCast& c, const Row& row) {
     LEDGER_TRY(v, eval(*c.operand, row));
     if (v.isNull() || v.type() == c.to) return v;
@@ -218,6 +305,10 @@ Result<Value> eval(const BoundExpr& expr, const Row& row) {
                 return evalInList(n, row);
             } else if constexpr (std::is_same_v<N, BoundLike>) {
                 return evalLike(n, row);
+            } else if constexpr (std::is_same_v<N, BoundCall>) {
+                return evalCall(n, row);
+            } else if constexpr (std::is_same_v<N, BoundCase>) {
+                return evalCase(n, row);
             } else {
                 return evalCast(n, row);
             }
@@ -243,6 +334,16 @@ bool isConstant(const BoundExpr& expr) noexcept {
                 return true;
             } else if constexpr (std::is_same_v<N, BoundLike>) {
                 return isConstant(*n.value) && isConstant(*n.pattern);
+            } else if constexpr (std::is_same_v<N, BoundCall>) {
+                for (const auto& a : n.args) {
+                    if (!isConstant(*a)) return false;
+                }
+                return true;
+            } else if constexpr (std::is_same_v<N, BoundCase>) {
+                for (const auto& [c, r] : n.whens) {
+                    if (!isConstant(*c) || !isConstant(*r)) return false;
+                }
+                return !n.elseExpr || isConstant(*n.elseExpr);
             } else {
                 return isConstant(*n.operand);
             }

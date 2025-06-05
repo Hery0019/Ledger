@@ -52,7 +52,7 @@ int precedence(const Expr& e) {
                                  std::is_same_v<N, Between> || std::is_same_v<N, Like>) {
                 return 4;
             } else {
-                return 8;  // Literal, ColumnRef, Call
+                return 8;  // Literal, ColumnRef, Call, Case
             }
         },
         e.node);
@@ -117,6 +117,23 @@ void render(const Expr& e, std::string& out, int parentPrecedence) {
                 render(*n.value, out, mine + 1);
                 out += n.negated ? " NOT LIKE " : " LIKE ";
                 render(*n.pattern, out, mine + 1);
+            } else if constexpr (std::is_same_v<N, Case>) {
+                out += "CASE";
+                if (n.operand) {
+                    out += ' ';
+                    render(*n.operand, out, 0);
+                }
+                for (const auto& [cond, result] : n.whens) {
+                    out += " WHEN ";
+                    render(*cond, out, 0);
+                    out += " THEN ";
+                    render(*result, out, 0);
+                }
+                if (n.elseExpr) {
+                    out += " ELSE ";
+                    render(*n.elseExpr, out, 0);
+                }
+                out += " END";
             } else {
                 out += n.name;
                 out += '(';
