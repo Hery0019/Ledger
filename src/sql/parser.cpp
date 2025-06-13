@@ -542,6 +542,28 @@ private:
                 LEDGER_TRY_VOID(expect(TokenKind::RParen));
                 return inner;
             }
+            case TokenKind::KwCase: {
+                // CASE [expr] WHEN expr THEN expr {WHEN ...} [ELSE expr] END
+                advance();
+                Case c{nullptr, {}, nullptr};
+                if (!at(TokenKind::KwWhen)) {
+                    LEDGER_TRY(operand, expression());
+                    c.operand = std::move(operand);
+                }
+                if (!at(TokenKind::KwWhen)) return unexpected("'WHEN'");
+                while (accept(TokenKind::KwWhen)) {
+                    LEDGER_TRY(cond, expression());
+                    LEDGER_TRY_VOID(expect(TokenKind::KwThen));
+                    LEDGER_TRY(result, expression());
+                    c.whens.emplace_back(std::move(cond), std::move(result));
+                }
+                if (accept(TokenKind::KwElse)) {
+                    LEDGER_TRY(e, expression());
+                    c.elseExpr = std::move(e);
+                }
+                LEDGER_TRY_VOID(expect(TokenKind::KwEnd));
+                return make(std::move(c), tok);
+            }
             default: return unexpected("expression");
         }
     }
