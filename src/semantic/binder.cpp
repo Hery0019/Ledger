@@ -74,8 +74,10 @@ bool containsAggregate(const ast::Expr& e) {
                     if (containsAggregate(*c) || containsAggregate(*r)) return true;
                 }
                 return false;
+            } else if constexpr (std::is_same_v<N, ast::InSelect>) {
+                return containsAggregate(*n.value);  // the subquery's own aggregates are its own
             } else {
-                return false;
+                return false;  // Literal, ColumnRef, Exists, ScalarSubquery
             }
         },
         e.node);
@@ -336,11 +338,62 @@ private:
     }
 
     Result<BoundStatement> bindStatement(const ast::Select& s) {
+        BoundSelect out;
+        // Subqueries met while binding this SELECT register themselves here.
+        std::vector<std::unique_ptr<BoundSelect>>* const savedSubqueries = subqueries_;
+        subqueries_ = &out.subqueries;
+        auto result = bindSelectBody(s, out);
+        subqueries_ = savedSubqueries;
+        LEDGER_TRY_VOID(result);
+
+        // UNION members: bound as independent SELECTs, matched column by
+        // column. ORDER BY then reads the output row.
+        for (const auto& member : s.unions) {
+            LEDGER_TRY(bound, bindStatement(*member.select));
+            auto sel = std::make_unique<BoundSelect>(std::get<BoundSelect>(std::move(bound)));
+            if (sel->columnNames.size() != out.columnNames.size()) {
+                return makeError(ErrorCode::SyntaxError,
+                                 "UNION members must have the same number of columns (" +
+                                     std::to_string(out.columnNames.size()) + " and " +
+                                     std::to_string(sel->columnNames.size()) + ")");
+            }
+            for (std::size_t i = 0; i < sel->projection.size(); ++i) {
+                const DataType a = out.projection[i]->type, b = sel->projection[i]->type;
+                if (!comparable(a, b)) {
+                    return makeError(ErrorCode::TypeError,
+                                     "UNION column " + std::to_string(i + 1) + " mixes " + typeName(a) +
+                                         " and " + typeName(b));
+                }
+            }
+            out.unions.push_back(BoundSelect::UnionMember{member.all, std::move(sel)});
+        }
+        if (!s.unions.empty()) {
+            // ORDER BY over the union result: output names only.
+            out.orderBy.clear();
+            for (const auto& ob : s.orderBy) {
+                const auto* c = std::get_if<ast::ColumnRef>(&ob.expr->node);
+                std::optional<std::size_t> idx;
+                if (c && c->qualifier.empty()) {
+                    for (std::size_t i = 0; i < out.columnNames.size() && !idx; ++i) {
+                        if (out.columnNames[i] == c->name) idx = i;
+                    }
+                }
+                if (!idx) {
+                    return errorAt(*ob.expr, ErrorCode::SyntaxError,
+                                   "ORDER BY on a UNION must name an output column");
+                }
+                out.orderBy.push_back(BoundOrderBy{make(BoundColumn{*idx}, out.projection[*idx]->type),
+                                                   ob.descending});
+            }
+        }
+        return BoundStatement{std::move(out)};
+    }
+
+    Result<void> bindSelectBody(const ast::Select& s, BoundSelect& out) {
         LEDGER_TRY(relation, fromClause(s, 0));
         const Scope scope{&relation->columns, s.from.alias, catalog_.findView(s.from.name) != nullptr,
                           !s.joins.empty()};
 
-        BoundSelect out;
         out.limit = s.limit;
         out.offset = s.offset;
         out.distinct = s.distinct;
@@ -431,7 +484,7 @@ private:
         out.relation = std::move(relation);
         out.aggregated = aggregated;
         out.aggregates = std::move(group.aggregates);
-        return BoundStatement{std::move(out)};
+        return {};
     }
 
     Result<BoundStatement> bindStatement(const ast::Update& s) {
@@ -659,12 +712,53 @@ private:
                     return bindLike(e, n, scope, group);
                 } else if constexpr (std::is_same_v<N, ast::Case>) {
                     return bindCase(e, n, scope, group);
+                } else if constexpr (std::is_same_v<N, ast::InSelect>) {
+                    LEDGER_TRY(value, bindExpr(*n.value, scope, group));
+                    LEDGER_TRY(slot, bindSubquery(e, *n.select, 1));
+                    const DataType colType = subqueries_->at(slot)->projection[0]->type;
+                    if (!comparable(value->type, colType)) {
+                        return errorAt(e, ErrorCode::TypeError,
+                                       "cannot compare " + typeName(value->type) + " with the subquery's " +
+                                           typeName(colType));
+                    }
+                    const DataType type = value->type == DataType::Null ? DataType::Null : DataType::Bool;
+                    return make(BoundInSubquery{std::move(value), slot, n.negated}, type);
+                } else if constexpr (std::is_same_v<N, ast::Exists>) {
+                    LEDGER_TRY(slot, bindSubquery(e, *n.select, 0));
+                    return make(BoundExists{slot, n.negated}, DataType::Bool);
+                } else if constexpr (std::is_same_v<N, ast::ScalarSubquery>) {
+                    LEDGER_TRY(slot, bindSubquery(e, *n.select, 1));
+                    return make(BoundScalarSubquery{slot}, subqueries_->at(slot)->projection[0]->type);
                 } else {
                     if (scalarByName(n.name)) return bindScalar(e, n, scope, group);
                     return bindCall(e, n, group);
                 }
             },
             e.node);
+    }
+
+    // Binds a nested SELECT on its own (no access to the enclosing scope:
+    // correlated subqueries are not supported) and registers it in the
+    // current statement's subquery list. `columns` = required output width,
+    // 0 for "any" (EXISTS).
+    Result<std::size_t> bindSubquery(const ast::Expr& e, const ast::Select& select, std::size_t columns) {
+        if (!subqueries_) {
+            return errorAt(e, ErrorCode::SyntaxError, "subqueries are only allowed inside a SELECT");
+        }
+        std::vector<std::unique_ptr<BoundSelect>>* outer = subqueries_;
+        auto bound = bindStatement(select);  // sets and restores subqueries_ for the nested level
+        subqueries_ = outer;
+        if (!bound.ok()) {
+            return makeError(bound.error().code, "in subquery: " + bound.error().message);
+        }
+        auto sub = std::make_unique<BoundSelect>(std::get<BoundSelect>(std::move(bound).value()));
+        if (columns && sub->columnNames.size() != columns) {
+            return errorAt(e, ErrorCode::SyntaxError,
+                           "subquery must return exactly " + std::to_string(columns) + " column, got " +
+                               std::to_string(sub->columnNames.size()));
+        }
+        subqueries_->push_back(std::move(sub));
+        return subqueries_->size() - 1;
     }
 
     // Common type of several branches (CASE results, COALESCE arguments):
@@ -992,6 +1086,8 @@ private:
     }
 
     const Catalog& catalog_;
+    // Subquery list of the SELECT being bound; nullptr outside a SELECT.
+    std::vector<std::unique_ptr<BoundSelect>>* subqueries_ = nullptr;
 };
 
 }  // namespace
