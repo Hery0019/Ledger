@@ -49,10 +49,11 @@ int precedence(const Expr& e) {
             } else if constexpr (std::is_same_v<N, Unary>) {
                 return n.op == UnaryOp::Not ? 3 : 7;
             } else if constexpr (std::is_same_v<N, IsNull> || std::is_same_v<N, InList> ||
-                                 std::is_same_v<N, Between> || std::is_same_v<N, Like>) {
+                                 std::is_same_v<N, Between> || std::is_same_v<N, Like> ||
+                                 std::is_same_v<N, InSelect>) {
                 return 4;
             } else {
-                return 8;  // Literal, ColumnRef, Call, Case
+                return 8;  // Literal, ColumnRef, Call, Case, Exists, ScalarSubquery
             }
         },
         e.node);
@@ -117,6 +118,15 @@ void render(const Expr& e, std::string& out, int parentPrecedence) {
                 render(*n.value, out, mine + 1);
                 out += n.negated ? " NOT LIKE " : " LIKE ";
                 render(*n.pattern, out, mine + 1);
+            } else if constexpr (std::is_same_v<N, InSelect>) {
+                // Subqueries are not rendered in full: the text is only used
+                // for naming and GROUP BY matching.
+                render(*n.value, out, mine + 1);
+                out += n.negated ? " NOT IN (SELECT ...)" : " IN (SELECT ...)";
+            } else if constexpr (std::is_same_v<N, Exists>) {
+                out += n.negated ? "NOT EXISTS (SELECT ...)" : "EXISTS (SELECT ...)";
+            } else if constexpr (std::is_same_v<N, ScalarSubquery>) {
+                out += "(SELECT ...)";
             } else if constexpr (std::is_same_v<N, Case>) {
                 out += "CASE";
                 if (n.operand) {
