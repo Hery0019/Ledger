@@ -102,8 +102,30 @@ struct Case {
     ExprPtr elseExpr;  // nullptr if absent
 };
 
+struct Select;
+
+// `x [NOT] IN (SELECT ...)`: the subquery must project one column.
+struct InSelect {
+    ExprPtr value;
+    std::unique_ptr<Select> select;
+    bool negated;
+};
+
+// `[NOT] EXISTS (SELECT ...)`
+struct Exists {
+    std::unique_ptr<Select> select;
+    bool negated;
+};
+
+// `(SELECT ...)` used as a value: one column, at most one row (NULL if none).
+struct ScalarSubquery {
+    std::unique_ptr<Select> select;
+};
+
 struct Expr {
-    std::variant<Literal, ColumnRef, Unary, Binary, IsNull, Call, InList, Between, Like, Case> node;
+    std::variant<Literal, ColumnRef, Unary, Binary, IsNull, Call, InList, Between, Like, Case, InSelect,
+                 Exists, ScalarSubquery>
+        node;
     // Position of the expression's first token, for binder error messages.
     std::size_t line;
     std::size_t column;
@@ -173,6 +195,14 @@ struct Select {
     std::vector<OrderBy> orderBy;   // empty if absent
     std::optional<std::int64_t> limit;   // >= 0 if present
     std::optional<std::int64_t> offset;  // >= 0 if present
+
+    // UNION [ALL] members, in order. ORDER BY / LIMIT / OFFSET written after
+    // the last member apply to the whole union and are stored on the head.
+    struct UnionMember {
+        bool all;
+        std::unique_ptr<Select> select;
+    };
+    std::vector<UnionMember> unions;
 };
 
 struct Update {

@@ -14,7 +14,7 @@ struct KeywordEntry {
     TokenKind kind;
 };
 
-constexpr std::array<KeywordEntry, 49> kKeywords{{
+constexpr std::array<KeywordEntry, 52> kKeywords{{
     {"select", TokenKind::KwSelect},   {"from", TokenKind::KwFrom},
     {"where", TokenKind::KwWhere},     {"insert", TokenKind::KwInsert},
     {"into", TokenKind::KwInto},       {"values", TokenKind::KwValues},
@@ -39,7 +39,8 @@ constexpr std::array<KeywordEntry, 49> kKeywords{{
     {"between", TokenKind::KwBetween}, {"like", TokenKind::KwLike},
     {"case", TokenKind::KwCase},       {"when", TokenKind::KwWhen},
     {"then", TokenKind::KwThen},       {"else", TokenKind::KwElse},
-    {"end", TokenKind::KwEnd},
+    {"end", TokenKind::KwEnd},         {"union", TokenKind::KwUnion},
+    {"all", TokenKind::KwAll},         {"exists", TokenKind::KwExists},
 }};
 
 // Explicit ASCII classification: we don't want to depend on the locale, and
@@ -290,6 +291,9 @@ std::string_view tokenKindName(TokenKind kind) noexcept {
         case TokenKind::KwThen:     return "THEN";
         case TokenKind::KwElse:     return "ELSE";
         case TokenKind::KwEnd:      return "END";
+        case TokenKind::KwUnion:    return "UNION";
+        case TokenKind::KwAll:      return "ALL";
+        case TokenKind::KwExists:   return "EXISTS";
         case TokenKind::Identifier: return "identifier";
         case TokenKind::Integer:    return "integer";
         case TokenKind::Float:      return "float";
