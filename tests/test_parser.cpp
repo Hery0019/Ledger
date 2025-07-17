@@ -50,7 +50,9 @@ std::string show(const Expr& e) {
             } else if constexpr (std::is_same_v<N, IsNull>) {
                 return "(" + show(*n.operand) + (n.negated ? " IS NOT NULL)" : " IS NULL)");
             } else if constexpr (std::is_same_v<N, InList> || std::is_same_v<N, Between> ||
-                                 std::is_same_v<N, Like> || std::is_same_v<N, Case>) {
+                                 std::is_same_v<N, Like> || std::is_same_v<N, Case> ||
+                                 std::is_same_v<N, InSelect> || std::is_same_v<N, Exists> ||
+                                 std::is_same_v<N, ScalarSubquery>) {
                 return "(" + exprToString(e) + ")";
             } else {
                 std::string s = n.name + "(";
