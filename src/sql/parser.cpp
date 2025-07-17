@@ -82,7 +82,10 @@ private:
             case TokenKind::KwCreate: return create();
             case TokenKind::KwDrop:   return drop();
             case TokenKind::KwInsert: return insert();
-            case TokenKind::KwSelect: return select();
+            case TokenKind::KwSelect: {
+                LEDGER_TRY(s, selectStatement());
+                return Statement{std::move(*s)};
+            }
             case TokenKind::KwUpdate: return update();
             case TokenKind::KwDelete: return del();
             default: return unexpected("statement (CREATE, DROP, INSERT, SELECT, UPDATE or DELETE)");
@@ -166,14 +169,17 @@ private:
         LEDGER_TRY_VOID(expect(TokenKind::KwAs));
         if (!at(TokenKind::KwSelect)) return unexpected("SELECT after AS");
         const std::size_t start = peek().offset;
-        LEDGER_TRY(stmt, select());
+        LEDGER_TRY(parsed, selectStatement());
         // The view text runs up to the `;` or the end of input.
         std::string text(src_.substr(start, peek().offset - start));
         while (!text.empty() && (text.back() == ' ' || text.back() == '\t' ||
                                  text.back() == '\n' || text.back() == '\r')) {
             text.pop_back();
         }
-        Select query = std::get<Select>(std::move(stmt));
+        Select query = std::move(*parsed);
+        if (!query.unions.empty()) {
+            return makeError(ErrorCode::SyntaxError, "view '" + name + "': UNION is not allowed in a view");
+        }
         if (!query.orderBy.empty() || query.limit || query.offset) {
             return makeError(ErrorCode::SyntaxError,
                              "view '" + name + "': ORDER BY, LIMIT and OFFSET are not allowed in a view");
@@ -217,6 +223,30 @@ private:
         LEDGER_TRY_VOID(expect(TokenKind::RParen));
 
         return Statement{Insert{std::move(table), std::move(columns), std::move(values)}};
+    }
+
+    // select {UNION [ALL] select}. Only the last member may carry ORDER BY /
+    // LIMIT / OFFSET; they apply to the whole union and move to the head.
+    Result<std::unique_ptr<Select>> selectStatement() {
+        LEDGER_TRY(headStmt, select());
+        auto head = std::make_unique<Select>(std::get<Select>(std::move(headStmt)));
+        while (at(TokenKind::KwUnion)) {
+            if (!head->orderBy.empty() || head->limit || head->offset) {
+                return unexpected("end of query (ORDER BY, LIMIT and OFFSET must follow the last SELECT of a UNION)");
+            }
+            advance();
+            const bool all = accept(TokenKind::KwAll);
+            if (!at(TokenKind::KwSelect)) return unexpected("SELECT after UNION");
+            LEDGER_TRY(memberStmt, select());
+            auto member = std::make_unique<Select>(std::get<Select>(std::move(memberStmt)));
+            head->orderBy = std::move(member->orderBy);
+            head->limit = member->limit;
+            head->offset = member->offset;
+            member->limit.reset();
+            member->offset.reset();
+            head->unions.push_back(Select::UnionMember{all, std::move(member)});
+        }
+        return head;
     }
 
     // SELECT (* | item {, item}) FROM tableRef {join} [WHERE expr]
@@ -408,6 +438,8 @@ private:
 
     Result<ExprPtr> notExpr() {
         const Token& start = peek();
+        // `NOT EXISTS (...)` is a primary, not a negated expression.
+        if (at(TokenKind::KwNot) && peekAhead(1).kind == TokenKind::KwExists) return comparison();
         if (accept(TokenKind::KwNot)) {
             LEDGER_TRY(operand, notExpr());
             return make(Unary{UnaryOp::Not, std::move(operand)}, start);
@@ -445,13 +477,19 @@ private:
 
         if (accept(TokenKind::KwIn)) {
             LEDGER_TRY_VOID(expect(TokenKind::LParen));
-            InList in{std::move(lhs), {}, negatedPredicate};
-            do {
-                LEDGER_TRY(item, expression());
-                in.items.push_back(std::move(item));
-            } while (accept(TokenKind::Comma));
-            LEDGER_TRY_VOID(expect(TokenKind::RParen));
-            lhs = make(std::move(in), start);
+            if (at(TokenKind::KwSelect)) {
+                LEDGER_TRY(sub, selectStatement());
+                LEDGER_TRY_VOID(expect(TokenKind::RParen));
+                lhs = make(InSelect{std::move(lhs), std::move(sub), negatedPredicate}, start);
+            } else {
+                InList in{std::move(lhs), {}, negatedPredicate};
+                do {
+                    LEDGER_TRY(item, expression());
+                    in.items.push_back(std::move(item));
+                } while (accept(TokenKind::Comma));
+                LEDGER_TRY_VOID(expect(TokenKind::RParen));
+                lhs = make(std::move(in), start);
+            }
         } else if (accept(TokenKind::KwBetween)) {
             LEDGER_TRY(low, additive());
             LEDGER_TRY_VOID(expect(TokenKind::KwAnd));
@@ -538,9 +576,28 @@ private:
             }
             case TokenKind::LParen: {
                 advance();
+                if (at(TokenKind::KwSelect)) {
+                    LEDGER_TRY(sub, selectStatement());
+                    LEDGER_TRY_VOID(expect(TokenKind::RParen));
+                    return make(ScalarSubquery{std::move(sub)}, tok);
+                }
                 LEDGER_TRY(inner, expression());
                 LEDGER_TRY_VOID(expect(TokenKind::RParen));
                 return inner;
+            }
+            case TokenKind::KwExists:
+            case TokenKind::KwNot: {
+                // [NOT] EXISTS (SELECT ...). A NOT that is not followed by
+                // EXISTS is the logical operator, handled at notExpr level.
+                const bool negated = tok.kind == TokenKind::KwNot;
+                if (negated && peekAhead(1).kind != TokenKind::KwExists) return unexpected("expression");
+                advance();
+                if (negated) advance();
+                LEDGER_TRY_VOID(expect(TokenKind::LParen));
+                if (!at(TokenKind::KwSelect)) return unexpected("SELECT after EXISTS (");
+                LEDGER_TRY(sub, selectStatement());
+                LEDGER_TRY_VOID(expect(TokenKind::RParen));
+                return make(Exists{std::move(sub), negated}, tok);
             }
             case TokenKind::KwCase: {
                 // CASE [expr] WHEN expr THEN expr {WHEN ...} [ELSE expr] END
