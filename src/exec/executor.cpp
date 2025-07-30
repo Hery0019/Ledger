@@ -42,6 +42,60 @@ struct RowLess {
 
 }  // namespace
 
+Executor::~Executor() {
+    // A session closing mid-transaction abandons it, like a disconnect.
+    if (undo_) (void)rollback();
+}
+
+// ---- transactions ----------------------------------------------------------
+
+Result<void> Executor::noDdlInTransaction() const {
+    if (!undo_) return {};
+    return makeError(ErrorCode::SyntaxError,
+                     "CREATE and DROP are not transactional; COMMIT or ROLLBACK first");
+}
+
+Result<QueryResult> Executor::run(const BoundBegin&) {
+    if (undo_) return makeError(ErrorCode::SyntaxError, "a transaction is already in progress");
+    undo_.emplace();
+    return QueryResult{};
+}
+
+Result<QueryResult> Executor::run(const BoundCommit&) {
+    if (!undo_) return makeError(ErrorCode::SyntaxError, "no transaction in progress");
+    // Every write was already flushed: committing only forgets the undo log.
+    undo_.reset();
+    return QueryResult{};
+}
+
+Result<QueryResult> Executor::run(const BoundRollback&) {
+    if (!undo_) return makeError(ErrorCode::SyntaxError, "no transaction in progress");
+    LEDGER_TRY_VOID(rollback());
+    return QueryResult{};
+}
+
+// Replays the undo log backwards. Stops at the first failing step (an
+// IoError): the remaining entries are kept so that ROLLBACK can be retried.
+Result<void> Executor::rollback() {
+    std::vector<Undo>& log = *undo_;
+    while (!log.empty()) {
+        const Undo& u = log.back();
+        Result<void> r;
+        switch (u.kind) {
+            case Undo::Kind::Insert: r = engine_.remove(u.table, u.id); break;
+            case Undo::Kind::Delete: r = engine_.restore(u.table, u.id, u.row); break;
+            case Undo::Kind::Update: r = engine_.update(u.table, u.id, u.row); break;
+        }
+        if (!r.ok()) {
+            return makeError(r.error().code, "rollback failed: " + r.error().message +
+                                                 " (" + std::to_string(log.size()) + " changes still pending)");
+        }
+        log.pop_back();
+    }
+    undo_.reset();
+    return {};
+}
+
 Result<QueryResult> Executor::execute(std::string_view sql) {
     LEDGER_TRY(stmt, parse(sql));
     LEDGER_TRY(bound, ledger::bind(stmt, catalog_));
@@ -55,6 +109,7 @@ Result<QueryResult> Executor::execute(const BoundStatement& stmt) {
 // ---- DDL -------------------------------------------------------------------
 
 Result<QueryResult> Executor::run(const BoundCreateTable& s) {
+    LEDGER_TRY_VOID(noDdlInTransaction());
     LEDGER_TRY_VOID(engine_.createTable(s.schema));
     auto added = catalog_.add(s.schema);
     if (!added.ok()) {
@@ -65,6 +120,7 @@ Result<QueryResult> Executor::run(const BoundCreateTable& s) {
 }
 
 Result<QueryResult> Executor::run(const BoundDropTable& s) {
+    LEDGER_TRY_VOID(noDdlInTransaction());
     LEDGER_TRY_VOID(engine_.dropTable(s.table));
     auto removed = catalog_.remove(s.table);
     if (!removed.ok()) {
@@ -78,6 +134,7 @@ Result<QueryResult> Executor::run(const BoundDropTable& s) {
 // is updated first, then the whole list is saved; on a save failure the
 // catalog change is rolled back so that memory and disk never disagree.
 Result<QueryResult> Executor::run(const BoundCreateView& s) {
+    LEDGER_TRY_VOID(noDdlInTransaction());
     LEDGER_TRY_VOID(catalog_.addView(s.def, s.sources));
     auto saved = engine_.saveViews(catalog_.views());
     if (!saved.ok()) {
@@ -88,6 +145,7 @@ Result<QueryResult> Executor::run(const BoundCreateView& s) {
 }
 
 Result<QueryResult> Executor::run(const BoundDropView& s) {
+    LEDGER_TRY_VOID(noDdlInTransaction());
     const ViewEntry* entry = catalog_.findView(s.name);
     if (!entry) return makeError(ErrorCode::NotFound, "unknown view '" + s.name + "'");
     const ViewEntry backup = *entry;
@@ -154,7 +212,8 @@ Result<QueryResult> Executor::run(const BoundInsert& s) {
     if (const auto pk = s.table->primaryKeyIndex()) {
         LEDGER_TRY_VOID(checkPrimaryKey(*s.table, s.row[*pk], {}));
     }
-    LEDGER_TRY_VOID(engine_.insert(s.table->name, s.row));
+    LEDGER_TRY(id, engine_.insert(s.table->name, s.row));
+    if (undo_) undo_->push_back(Undo{Undo::Kind::Insert, s.table->name, id, {}});
     return QueryResult{{}, {}, 1, ResultKind::Dml};
 }
 
@@ -547,14 +606,22 @@ Result<QueryResult> Executor::run(const BoundUpdate& s) {
         }
     }
 
-    // Pass 2: write.
-    for (const auto& [id, row] : updated) LEDGER_TRY_VOID(engine_.update(s.table->name, id, row));
+    // Pass 2: write. The undo entry (previous version) is recorded before
+    // each write, so a failing write is still undone by ROLLBACK.
+    for (std::size_t i = 0; i < updated.size(); ++i) {
+        const auto& [id, row] = updated[i];
+        if (undo_) undo_->push_back(Undo{Undo::Kind::Update, s.table->name, id, matches[i].second});
+        LEDGER_TRY_VOID(engine_.update(s.table->name, id, row));
+    }
     return QueryResult{{}, {}, updated.size(), ResultKind::Dml};
 }
 
 Result<QueryResult> Executor::run(const BoundDelete& s) {
     LEDGER_TRY(matches, filter(*s.table, s.where.get()));
-    for (const auto& [id, row] : matches) LEDGER_TRY_VOID(engine_.remove(s.table->name, id));
+    for (const auto& [id, row] : matches) {
+        if (undo_) undo_->push_back(Undo{Undo::Kind::Delete, s.table->name, id, row});
+        LEDGER_TRY_VOID(engine_.remove(s.table->name, id));
+    }
     return QueryResult{{}, {}, matches.size(), ResultKind::Dml};
 }
 
