@@ -230,7 +230,12 @@ struct DropView {
     std::string name;
 };
 
-using Statement =
-    std::variant<CreateTable, DropTable, CreateView, DropView, Insert, Select, Update, Delete>;
+// BEGIN [TRANSACTION] / COMMIT / ROLLBACK
+struct Begin {};
+struct Commit {};
+struct Rollback {};
+
+using Statement = std::variant<CreateTable, DropTable, CreateView, DropView, Insert, Select, Update,
+                               Delete, Begin, Commit, Rollback>;
 
 }  // namespace ledger::ast

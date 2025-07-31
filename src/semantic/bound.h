@@ -259,8 +259,12 @@ struct BoundDropView {
     std::string name;
 };
 
+struct BoundBegin {};
+struct BoundCommit {};
+struct BoundRollback {};
+
 using BoundStatement = std::variant<BoundCreateTable, BoundDropTable, BoundCreateView,
                                     BoundDropView, BoundInsert, BoundSelect, BoundUpdate,
-                                    BoundDelete>;
+                                    BoundDelete, BoundBegin, BoundCommit, BoundRollback>;
 
 }  // namespace ledger
