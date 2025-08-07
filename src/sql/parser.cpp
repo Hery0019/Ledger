@@ -88,7 +88,14 @@ private:
             }
             case TokenKind::KwUpdate: return update();
             case TokenKind::KwDelete: return del();
-            default: return unexpected("statement (CREATE, DROP, INSERT, SELECT, UPDATE or DELETE)");
+            case TokenKind::KwBegin:
+                advance();
+                accept(TokenKind::KwTransaction);
+                return Statement{Begin{}};
+            case TokenKind::KwCommit:  advance(); return Statement{Commit{}};
+            case TokenKind::KwRollback: advance(); return Statement{Rollback{}};
+            default:
+                return unexpected("statement (CREATE, DROP, INSERT, SELECT, UPDATE, DELETE, BEGIN, COMMIT or ROLLBACK)");
         }
     }
 

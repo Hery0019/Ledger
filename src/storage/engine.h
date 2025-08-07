@@ -40,6 +40,10 @@ public:
     virtual Result<void> update(std::string_view table, RowId id, const Row& row) = 0;  // NotFound
     virtual Result<void> remove(std::string_view table, RowId id) = 0;                  // NotFound
 
+    // Re-inserts a row under a rowid that was removed earlier (transaction
+    // rollback of a DELETE). The rowid must not be live. AlreadyExists otherwise.
+    virtual Result<void> restore(std::string_view table, RowId id, const Row& row) = 0;
+
     // Rewrites the rows file without tombstones. The engine may also trigger
     // it on its own.
     virtual Result<void> compact(std::string_view table) = 0;
