@@ -18,6 +18,7 @@ public:
                       const std::function<bool(RowId, const Row&)>& visit) override;
     Result<void> update(std::string_view table, RowId id, const Row& row) override;
     Result<void> remove(std::string_view table, RowId id) override;
+    Result<void> restore(std::string_view table, RowId id, const Row& row) override;
     Result<void> compact(std::string_view table) override;
     Result<std::vector<TableSchema>> loadSchemas() override;
     Result<void> saveViews(const std::vector<ViewDef>& views) override;

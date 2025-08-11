@@ -66,6 +66,19 @@ Result<void> MemoryEngine::remove(std::string_view table, RowId id) {
     return {};
 }
 
+Result<void> MemoryEngine::restore(std::string_view table, RowId id, const Row& row) {
+    LEDGER_TRY(t, find(table));
+    if (t->rows.contains(id)) {
+        return makeError(ErrorCode::AlreadyExists, "row " + std::to_string(id) + " is live");
+    }
+    if (row.size() != t->schema.columns.size()) {
+        return makeError(ErrorCode::Internal, "restore: wrong number of values");
+    }
+    t->rows.emplace(id, row);
+    if (id >= t->nextId) t->nextId = id + 1;
+    return {};
+}
+
 Result<void> MemoryEngine::compact(std::string_view table) {
     LEDGER_TRY_VOID(find(table));
     return {};  // nothing to compact in memory
