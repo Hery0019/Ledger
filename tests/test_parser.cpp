@@ -282,9 +282,9 @@ TEST_CASE("DELETE with and without WHERE") {
 // ---- general structure -----------------------------------------------------
 
 TEST_CASE("unknown statement and trailing garbage") {
-    CHECK(errorOf("") == "1:1: expected statement (CREATE, DROP, INSERT, SELECT, UPDATE or DELETE), got 'end of input'");
+    CHECK(errorOf("") == "1:1: expected statement (CREATE, DROP, INSERT, SELECT, UPDATE, DELETE, BEGIN, COMMIT or ROLLBACK), got 'end of input'");
     CHECK(errorOf("EXPLAIN SELECT * FROM t") ==
-          "1:1: expected statement (CREATE, DROP, INSERT, SELECT, UPDATE or DELETE), got identifier 'explain'");
+          "1:1: expected statement (CREATE, DROP, INSERT, SELECT, UPDATE, DELETE, BEGIN, COMMIT or ROLLBACK), got identifier 'explain'");
     CHECK(errorOf("SELECT * FROM t; SELECT * FROM t") == "1:18: expected end of input, got 'SELECT'");
     CHECK(errorOf("SELECT * FROM t;;") == "1:17: expected end of input, got ';'");
 }
