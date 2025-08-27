@@ -188,23 +188,38 @@ Result<void> Executor::checkPrimaryKey(const TableSchema& table, const Value& ke
                                        const std::vector<RowId>& ignore) {
     const auto pk = table.primaryKeyIndex();
     if (!pk) return {};
-    bool duplicate = false;
-    LEDGER_TRY_VOID(engine_.scan(table.name, [&](RowId id, const Row& row) {
-        if (std::find(ignore.begin(), ignore.end(), id) != ignore.end()) return true;
-        // PK => NOT NULL: neither side is NULL, compare never returns Unknown
-        // nor an error (same type).
-        if (Value::compare(row[*pk], key).value() == Ordering::Equal) {
-            duplicate = true;
-            return false;
-        }
-        return true;
-    }));
-    if (duplicate) {
+    // One index lookup instead of a scan. PK => NOT NULL, so `key` is never
+    // NULL and the index can answer.
+    LEDGER_TRY(hit, engine_.lookup(table.name, *pk, key));
+    if (hit && std::find(ignore.begin(), ignore.end(), hit->first) == ignore.end()) {
         return makeError(ErrorCode::ConstraintViolation,
                          "duplicate primary key " + key.toText() + " in table '" + table.name + "'");
     }
     return {};
 }
+
+namespace {
+
+// `pk = constant` (either side) on a plain table scan: the shape the index
+// can answer directly. Returns the constant, or nullptr.
+const Value* pointLookupKey(const BoundSelect& s, const IStorageEngine& engine) {
+    if (!s.where || s.aggregated) return nullptr;
+    const auto* scan = std::get_if<RelScan>(&s.relation->node);
+    if (!scan) return nullptr;
+    const auto pk = scan->table->primaryKeyIndex();
+    if (!pk || !engine.indexed(scan->table->name, *pk)) return nullptr;
+    const auto* eq = std::get_if<BoundBinary>(&s.where->node);
+    if (!eq || eq->op != ast::BinaryOp::Eq) return nullptr;
+    const auto* lcol = std::get_if<BoundColumn>(&eq->lhs->node);
+    const auto* rcol = std::get_if<BoundColumn>(&eq->rhs->node);
+    const auto* lval = std::get_if<Value>(&eq->lhs->node);
+    const auto* rval = std::get_if<Value>(&eq->rhs->node);
+    if (lcol && rval && lcol->index == *pk && !rval->isNull()) return rval;
+    if (rcol && lval && rcol->index == *pk && !lval->isNull()) return lval;
+    return nullptr;
+}
+
+}  // namespace
 
 // ---- DML -------------------------------------------------------------------
 
@@ -430,11 +445,21 @@ Result<std::vector<Row>> Executor::collect(const BoundSelect& s) {
         ~Restore() { slot = value; }
     } restore{subs_, saved};
 
-    LEDGER_TRY(source, evaluate(*s.relation));
-
-    // WHERE over the relation's rows.
+    // WHERE over the relation's rows. `WHERE pk = value` on a table is
+    // answered by the primary-key index without materializing the table.
     std::vector<std::pair<RowId, Row>> matches;
-    if (s.where && s.where->type == DataType::Null) {
+    std::vector<std::pair<RowId, Row>> source;
+    if (const Value* key = pointLookupKey(s, engine_)) {
+        const auto* scan = std::get_if<RelScan>(&s.relation->node);
+        LEDGER_TRY(hit, engine_.lookup(scan->table->name, *scan->table->primaryKeyIndex(), *key));
+        if (hit) matches.push_back(std::move(*hit));
+    } else {
+        LEDGER_TRY(rows, evaluate(*s.relation));
+        source = std::move(rows);
+    }
+    if (pointLookupKey(s, engine_)) {
+        // done above
+    } else if (s.where && s.where->type == DataType::Null) {
         // A WHERE that is always NULL keeps nothing.
     } else if (s.where) {
         for (auto& [id, row] : source) {

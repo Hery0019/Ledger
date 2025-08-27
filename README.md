@@ -33,7 +33,10 @@ meant for personal use afterwards.
   logged; `ROLLBACK` undoes them in reverse order. Atomic within the process,
   not across a crash. `CREATE` / `DROP` are refused inside a transaction; a
   session closing mid-transaction rolls it back.
-- No correlated subqueries, no indexes.
+- Every `PRIMARY KEY` has an in-memory index (rebuilt when a table is loaded):
+  key uniqueness and `WHERE pk = value` on a table are answered without a
+  scan. No user-defined indexes.
+- No correlated subqueries.
 
 ## Build and test
 
