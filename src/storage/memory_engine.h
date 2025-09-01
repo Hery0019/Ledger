@@ -4,6 +4,7 @@
 #include <string>
 
 #include "storage/engine.h"
+#include "storage/pk_index.h"
 
 namespace ledger {
 
@@ -19,6 +20,9 @@ public:
     Result<void> update(std::string_view table, RowId id, const Row& row) override;
     Result<void> remove(std::string_view table, RowId id) override;
     Result<void> restore(std::string_view table, RowId id, const Row& row) override;
+    [[nodiscard]] bool indexed(std::string_view table, std::size_t column) const noexcept override;
+    Result<std::optional<std::pair<RowId, Row>>> lookup(std::string_view table, std::size_t column,
+                                                        const Value& key) override;
     Result<void> compact(std::string_view table) override;
     Result<std::vector<TableSchema>> loadSchemas() override;
     Result<void> saveViews(const std::vector<ViewDef>& views) override;
@@ -29,6 +33,7 @@ private:
         TableSchema schema;
         std::map<RowId, Row> rows;
         RowId nextId = 1;
+        PkIndex index;
     };
     Result<Table*> find(std::string_view table);
 
