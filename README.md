@@ -3,6 +3,8 @@
 An embedded SQL engine in C++20 with plain-text storage. A learning project,
 meant for personal use afterwards.
 
+![Getting started: the banner, CREATE TABLE, INSERT and a styled SELECT](docs/getting-started.svg)
+
 ## Scope (v1)
 
 - `CREATE TABLE` / `DROP TABLE` — types `INT`, `FLOAT`, `TEXT`, `BOOL`;
@@ -37,6 +39,14 @@ meant for personal use afterwards.
   key uniqueness and `WHERE pk = value` on a table are answered without a
   scan. No user-defined indexes.
 - No correlated subqueries.
+
+![Joins, aggregates, a view and CASE](docs/queries.svg)
+
+![A transaction rolled back, then a primary-key error](docs/transactions.svg)
+
+The images above are generated from the real program output by
+`tools/screenshots.sh` (`tools/ansi2svg.pl` turns the coloured terminal
+output into SVG), so they always match the current build.
 
 ## Build and test
 
