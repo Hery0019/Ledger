@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="712" height="860" font-family="Cascadia Code, JetBrains Mono, Fira Code, Consolas, DejaVu Sans Mono, monospace" font-size="14">
+  <rect width="100%" height="100%" rx="10" fill="#282c34"/>
+  <circle cx="22" cy="20" r="6" fill="#ff5f57"/><circle cx="42" cy="20" r="6" fill="#febc2e"/><circle cx="62" cy="20" r="6" fill="#28c840"/>
+  <text x="356" y="25" text-anchor="middle" fill="#9da5b4" font-size="12">ledger â joins, aggregates, views</text>
+  <text x="16" y="58" xml:space="preserve"><tspan fill="#98c379">ledger</tspan><tspan fill="#d7dae0" opacity="0.6">&gt; </tspan><tspan fill="#56b6c2">CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, total FLOAT)</tspan><tspan fill="#d7dae0">;</tspan></text>
+  <text x="16" y="78" xml:space="preserve"><tspan fill="#d7dae0" opacity="0.6">ok</tspan></text>
+  <text x="16" y="98" xml:space="preserve"></text>
+  <text x="16" y="118" xml:space="preserve"><tspan fill="#98c379">ledger</tspan><tspan fill="#d7dae0" opacity="0.6">&gt; </tspan><tspan fill="#56b6c2">INSERT INTO orders VALUES (10, 1, 50.0)</tspan><tspan fill="#d7dae0">;</tspan></text>
+  <text x="16" y="138" xml:space="preserve"><tspan fill="#d7dae0" opacity="0.6">1 row affected</tspan></text>
+  <text x="16" y="158" xml:space="preserve"></text>
+  <text x="16" y="178" xml:space="preserve"><tspan fill="#98c379">ledger</tspan><tspan fill="#d7dae0" opacity="0.6">&gt; </tspan><tspan fill="#56b6c2">INSERT INTO orders VALUES (11, 1, 25.5)</tspan><tspan fill="#d7dae0">;</tspan></text>
+  <text x="16" y="198" xml:space="preserve"><tspan fill="#d7dae0" opacity="0.6">1 row affected</tspan></text>
+  <text x="16" y="218" xml:space="preserve"></text>
+  <text x="16" y="238" xml:space="preserve"><tspan fill="#98c379">ledger</tspan><tspan fill="#d7dae0" opacity="0.6">&gt; </tspan><tspan fill="#56b6c2">INSERT INTO orders VALUES (12, 3, 10.0)</tspan><tspan fill="#d7dae0">;</tspan></text>
+  <text x="16" y="258" xml:space="preserve"><tspan fill="#d7dae0" opacity="0.6">1 row affected</tspan></text>
+  <text x="16" y="278" xml:space="preserve"></text>
+  <text x="16" y="298" xml:space="preserve"><tspan fill="#98c379">ledger</tspan><tspan fill="#d7dae0" opacity="0.6">&gt; </tspan><tspan fill="#56b6c2">SELECT u.name, count(o.id) AS orders, coalesce(sum(o.total), 0) AS spent</tspan></text>
+  <text x="16" y="318" xml:space="preserve"><tspan fill="#56b6c2">  FROM users u LEFT JOIN orders o ON o.user_id = u.id</tspan></text>
+  <text x="16" y="338" xml:space="preserve"><tspan fill="#56b6c2">  GROUP BY u.name ORDER BY spent DESC</tspan><tspan fill="#d7dae0">;</tspan></text>
+  <text x="16" y="358" xml:space="preserve"><tspan fill="#6b717d">╭───────┬────────┬───────╮</tspan></text>
+  <text x="16" y="378" xml:space="preserve"><tspan fill="#6b717d">│</tspan><tspan fill="#d7dae0"> </tspan><tspan fill="#56b6c2" font-weight="bold">name</tspan><tspan fill="#d7dae0">  </tspan><tspan fill="#6b717d">│</tspan><tspan fill="#d7dae0"> </tspan><tspan fill="#56b6c2" font-weight="bold">orders</tspan><tspan fill="#d7dae0"> </tspan><tspan fill="#6b717d">│</tspan><tspan fill="#d7dae0"> </tspan><tspan fill="#56b6c2" font-weight="bold">spent</tspan><tspan fill="#d7dae0"> </tspan><tspan fill="#6b717d">│</tspan></text>
+  <text x="16" y="398" xml:space="preserve"><tspan fill="#6b717d">├───────┼────────┼───────┤</tspan></text>
+  <text x="16" y="418" xml:space="preserve"><tspan fill="#6b717d">│</tspan><tspan fill="#d7dae0"> Alice </tspan><tspan fill="#6b717d">│</tspan><tspan fill="#d7dae0">      </tspan><tspan fill="#e5c07b">2</tspan><tspan fill="#d7dae0"> </tspan><tspan fill="#6b717d">│</tspan><tspan fill="#d7dae0">  </tspan><tspan fill="#e5c07b">75.5</tspan><tspan fill="#d7dae0"> </tspan><tspan fill="#6b717d">│</tspan></text>
+  <text x="16" y="438" xml:space="preserve"><tspan fill="#6b717d">│</tspan><tspan fill="#d7dae0"> Café  </tspan><tspan fill="#6b717d">│</tspan><tspan fill="#d7dae0">      </tspan><tspan fill="#e5c07b">1</tspan><tspan fill="#d7dae0"> </tspan><tspan fill="#6b717d">│</tspan><tspan fill="#d7dae0">    </tspan><tspan fill="#e5c07b">10</tspan><tspan fill="#d7dae0"> </tspan><tspan fill="#6b717d">│</tspan></text>
+  <text x="16" y="458" xml:space="preserve"><tspan fill="#6b717d">│</tspan><tspan fill="#d7dae0"> Bob   </tspan><tspan fill="#6b717d">│</tspan><tspan fill="#d7dae0">      </tspan><tspan fill="#e5c07b">0</tspan><tspan fill="#d7dae0"> </tspan><tspan fill="#6b717d">│</tspan><tspan fill="#d7dae0">     </tspan><tspan fill="#e5c07b">0</tspan><tspan fill="#d7dae0"> </tspan><tspan fill="#6b717d">│</tspan></text>
+  <text x="16" y="478" xml:space="preserve"><tspan fill="#6b717d">╰───────┴────────┴───────╯</tspan></text>
+  <text x="16" y="498" xml:space="preserve"><tspan fill="#d7dae0" opacity="0.6">3 rows</tspan></text>
+  <text x="16" y="518" xml:space="preserve"></text>
+  <text x="16" y="538" xml:space="preserve"><tspan fill="#98c379">ledger</tspan><tspan fill="#d7dae0" opacity="0.6">&gt; </tspan><tspan fill="#56b6c2">CREATE VIEW big_spenders AS</tspan></text>
+  <text x="16" y="558" xml:space="preserve"><tspan fill="#56b6c2">  SELECT u.name, o.total FROM users u JOIN orders o ON o.user_id = u.id</tspan></text>
+  <text x="16" y="578" xml:space="preserve"><tspan fill="#56b6c2">  WHERE o.total &gt;= 20</tspan><tspan fill="#d7dae0">;</tspan></text>
+  <text x="16" y="598" xml:space="preserve"><tspan fill="#d7dae0" opacity="0.6">ok</tspan></text>
+  <text x="16" y="618" xml:space="preserve"></text>
+  <text x="16" y="638" xml:space="preserve"><tspan fill="#98c379">ledger</tspan><tspan fill="#d7dae0" opacity="0.6">&gt; </tspan><tspan fill="#56b6c2">SELECT upper(name) AS who,</tspan></text>
+  <text x="16" y="658" xml:space="preserve"><tspan fill="#56b6c2">       CASE WHEN total &gt; 40 THEN 'large' ELSE 'medium' END AS size</tspan></text>
+  <text x="16" y="678" xml:space="preserve"><tspan fill="#56b6c2">  FROM big_spenders</tspan><tspan fill="#d7dae0">;</tspan></text>
+  <text x="16" y="698" xml:space="preserve"><tspan fill="#6b717d">╭───────┬────────╮</tspan></text>
+  <text x="16" y="718" xml:space="preserve"><tspan fill="#6b717d">│</tspan><tspan fill="#d7dae0"> </tspan><tspan fill="#56b6c2" font-weight="bold">who</tspan><tspan fill="#d7dae0">   </tspan><tspan fill="#6b717d">│</tspan><tspan fill="#d7dae0"> </tspan><tspan fill="#56b6c2" font-weight="bold">size</tspan><tspan fill="#d7dae0">   </tspan><tspan fill="#6b717d">│</tspan></text>
+  <text x="16" y="738" xml:space="preserve"><tspan fill="#6b717d">├───────┼────────┤</tspan></text>
+  <text x="16" y="758" xml:space="preserve"><tspan fill="#6b717d">│</tspan><tspan fill="#d7dae0"> ALICE </tspan><tspan fill="#6b717d">│</tspan><tspan fill="#d7dae0"> large  </tspan><tspan fill="#6b717d">│</tspan></text>
+  <text x="16" y="778" xml:space="preserve"><tspan fill="#6b717d">│</tspan><tspan fill="#d7dae0"> ALICE </tspan><tspan fill="#6b717d">│</tspan><tspan fill="#d7dae0"> medium </tspan><tspan fill="#6b717d">│</tspan></text>
+  <text x="16" y="798" xml:space="preserve"><tspan fill="#6b717d">╰───────┴────────╯</tspan></text>
+  <text x="16" y="818" xml:space="preserve"><tspan fill="#d7dae0" opacity="0.6">2 rows</tspan></text>
+  <text x="16" y="838" xml:space="preserve"></text>
+</svg>
