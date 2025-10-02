@@ -138,6 +138,7 @@ struct ColumnDef {
     DataType type;  // never DataType::Null
     bool primaryKey;
     bool notNull;
+    ExprPtr defaultExpr;  // DEFAULT <constant expression>, nullptr if absent
 };
 
 struct CreateTable {
