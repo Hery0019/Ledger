@@ -206,8 +206,21 @@ private:
                 }
                 hasPrimaryKey = true;
             }
-            schema.columns.push_back(ColumnSchema{c.name, c.type, c.primaryKey,
-                                                  c.notNull || c.primaryKey});
+            ColumnSchema column{c.name, c.type, c.primaryKey, c.notNull || c.primaryKey, std::nullopt};
+            if (c.defaultExpr) {
+                // A DEFAULT is a constant: bound without any column in scope,
+                // it folds to a Value, then must fit the column like an
+                // inserted value would.
+                LEDGER_TRY(e, bindExpr(*c.defaultExpr, nullptr));
+                LEDGER_TRY(fitted, fitToColumn(std::move(e), column, *c.defaultExpr));
+                const Value* v = std::get_if<Value>(&fitted->node);
+                if (!v) {
+                    return errorAt(*c.defaultExpr, ErrorCode::SyntaxError,
+                                   "DEFAULT for column '" + c.name + "' must be a constant");
+                }
+                column.defaultValue = *v;
+            }
+            schema.columns.push_back(std::move(column));
         }
         return BoundStatement{BoundCreateTable{std::move(schema)}};
     }
@@ -332,10 +345,15 @@ private:
             row[targets[i]] = *v;
             provided[targets[i]] = true;
         }
+        // Omitted columns take their DEFAULT, else NULL (refused on NOT NULL).
         for (std::size_t i = 0; i < table->columns.size(); ++i) {
-            if (!provided[i] && table->columns[i].notNull) {
+            if (provided[i]) continue;
+            const ColumnSchema& col = table->columns[i];
+            if (col.defaultValue) {
+                row[i] = *col.defaultValue;
+            } else if (col.notNull) {
                 return makeError(ErrorCode::ConstraintViolation,
-                                 "column '" + table->columns[i].name + "' cannot be NULL");
+                                 "column '" + col.name + "' cannot be NULL");
             }
         }
         return BoundStatement{BoundInsert{table, std::move(row)}};
