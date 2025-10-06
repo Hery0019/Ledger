@@ -133,10 +133,15 @@ private:
         LEDGER_TRY(name, identifier());
         LEDGER_TRY(type, dataType());
 
-        ColumnDef col{std::move(name), type, false, false};
+        ColumnDef col{std::move(name), type, false, false, nullptr};
         // Constraints in any order, each at most once.
         for (;;) {
-            if (at(TokenKind::KwPrimary)) {
+            if (at(TokenKind::KwDefault)) {
+                if (col.defaultExpr) return unexpected("a single DEFAULT");
+                advance();
+                LEDGER_TRY(e, expression());
+                col.defaultExpr = std::move(e);
+            } else if (at(TokenKind::KwPrimary)) {
                 if (col.primaryKey) return unexpected("a single PRIMARY KEY constraint");
                 advance();
                 LEDGER_TRY_VOID(expect(TokenKind::KwKey));
