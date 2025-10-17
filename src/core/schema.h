@@ -18,11 +18,13 @@ struct ColumnSchema {
     // DEFAULT: the value used when an INSERT omits the column (a constant,
     // already converted to the column type). Absent = NULL.
     std::optional<Value> defaultValue;
+    bool unique = false;  // UNIQUE: no two live rows share a non-NULL value
 
     // A constructor rather than aggregate initialization, so that adding a
     // constraint field never touches the many `ColumnSchema{...}` call sites.
-    ColumnSchema(std::string n, DataType t, bool pk, bool nn, std::optional<Value> def = std::nullopt)
-        : name(std::move(n)), type(t), primaryKey(pk), notNull(nn), defaultValue(std::move(def)) {}
+    ColumnSchema(std::string n, DataType t, bool pk, bool nn, std::optional<Value> def = std::nullopt,
+                 bool uq = false)
+        : name(std::move(n)), type(t), primaryKey(pk), notNull(nn), defaultValue(std::move(def)), unique(uq) {}
 };
 
 struct TableSchema {
