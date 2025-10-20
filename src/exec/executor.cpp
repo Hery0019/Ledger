@@ -184,39 +184,44 @@ Result<std::vector<std::pair<RowId, Row>>> Executor::filter(const TableSchema& t
     return out;
 }
 
-Result<void> Executor::checkPrimaryKey(const TableSchema& table, const Value& key,
-                                       const std::vector<RowId>& ignore) {
-    const auto pk = table.primaryKeyIndex();
-    if (!pk) return {};
-    // One index lookup instead of a scan. PK => NOT NULL, so `key` is never
-    // NULL and the index can answer.
-    LEDGER_TRY(hit, engine_.lookup(table.name, *pk, key));
-    if (hit && std::find(ignore.begin(), ignore.end(), hit->first) == ignore.end()) {
-        return makeError(ErrorCode::ConstraintViolation,
-                         "duplicate primary key " + key.toText() + " in table '" + table.name + "'");
+// PRIMARY KEY and UNIQUE columns: no other live row (outside `ignore`) may
+// hold the same non-NULL value. One index lookup per constrained column.
+Result<void> Executor::checkUnique(const TableSchema& table, const Row& row,
+                                   const std::vector<RowId>& ignore) {
+    for (std::size_t c = 0; c < table.columns.size(); ++c) {
+        const ColumnSchema& col = table.columns[c];
+        if (!(col.primaryKey || col.unique) || row[c].isNull()) continue;
+        LEDGER_TRY(hit, engine_.lookup(table.name, c, row[c]));
+        if (hit && std::find(ignore.begin(), ignore.end(), hit->first) == ignore.end()) {
+            return makeError(ErrorCode::ConstraintViolation,
+                             col.primaryKey
+                                 ? "duplicate primary key " + row[c].toText() + " in table '" + table.name + "'"
+                                 : "duplicate value " + row[c].toText() + " for UNIQUE column '" + col.name +
+                                       "' in table '" + table.name + "'");
+        }
     }
     return {};
 }
 
 namespace {
 
-// `pk = constant` (either side) on a plain table scan: the shape the index
-// can answer directly. Returns the constant, or nullptr.
-const Value* pointLookupKey(const BoundSelect& s, const IStorageEngine& engine) {
-    if (!s.where || s.aggregated) return nullptr;
+// `indexed_column = constant` (either side) on a plain table scan: the shape
+// an index can answer directly. Returns {column, constant}, or nullopt.
+std::optional<std::pair<std::size_t, const Value*>> pointLookupKey(const BoundSelect& s,
+                                                                   const IStorageEngine& engine) {
+    if (!s.where || s.aggregated) return std::nullopt;
     const auto* scan = std::get_if<RelScan>(&s.relation->node);
-    if (!scan) return nullptr;
-    const auto pk = scan->table->primaryKeyIndex();
-    if (!pk || !engine.indexed(scan->table->name, *pk)) return nullptr;
+    if (!scan) return std::nullopt;
     const auto* eq = std::get_if<BoundBinary>(&s.where->node);
-    if (!eq || eq->op != ast::BinaryOp::Eq) return nullptr;
+    if (!eq || eq->op != ast::BinaryOp::Eq) return std::nullopt;
     const auto* lcol = std::get_if<BoundColumn>(&eq->lhs->node);
     const auto* rcol = std::get_if<BoundColumn>(&eq->rhs->node);
     const auto* lval = std::get_if<Value>(&eq->lhs->node);
     const auto* rval = std::get_if<Value>(&eq->rhs->node);
-    if (lcol && rval && lcol->index == *pk && !rval->isNull()) return rval;
-    if (rcol && lval && rcol->index == *pk && !lval->isNull()) return lval;
-    return nullptr;
+    const BoundColumn* col = lcol && rval ? lcol : (rcol && lval ? rcol : nullptr);
+    const Value* key = lcol && rval ? rval : (rcol && lval ? lval : nullptr);
+    if (!col || key->isNull() || !engine.indexed(scan->table->name, col->index)) return std::nullopt;
+    return std::pair{col->index, key};
 }
 
 }  // namespace
@@ -224,9 +229,7 @@ const Value* pointLookupKey(const BoundSelect& s, const IStorageEngine& engine) 
 // ---- DML -------------------------------------------------------------------
 
 Result<QueryResult> Executor::run(const BoundInsert& s) {
-    if (const auto pk = s.table->primaryKeyIndex()) {
-        LEDGER_TRY_VOID(checkPrimaryKey(*s.table, s.row[*pk], {}));
-    }
+    LEDGER_TRY_VOID(checkUnique(*s.table, s.row, {}));
     LEDGER_TRY(id, engine_.insert(s.table->name, s.row));
     if (undo_) undo_->push_back(Undo{Undo::Kind::Insert, s.table->name, id, {}});
     return QueryResult{{}, {}, 1, ResultKind::Dml};
@@ -449,9 +452,9 @@ Result<std::vector<Row>> Executor::collect(const BoundSelect& s) {
     // answered by the primary-key index without materializing the table.
     std::vector<std::pair<RowId, Row>> matches;
     std::vector<std::pair<RowId, Row>> source;
-    if (const Value* key = pointLookupKey(s, engine_)) {
+    if (const auto point = pointLookupKey(s, engine_)) {
         const auto* scan = std::get_if<RelScan>(&s.relation->node);
-        LEDGER_TRY(hit, engine_.lookup(scan->table->name, *scan->table->primaryKeyIndex(), *key));
+        LEDGER_TRY(hit, engine_.lookup(scan->table->name, point->first, *point->second));
         if (hit) matches.push_back(std::move(*hit));
     } else {
         LEDGER_TRY(rows, evaluate(*s.relation));
@@ -612,20 +615,26 @@ Result<QueryResult> Executor::run(const BoundUpdate& s) {
         updated.emplace_back(id, std::move(next));
     }
 
-    // PK constraint: every new key against the untouched rows and against the
-    // other modified rows.
-    if (const auto pk = s.table->primaryKeyIndex()) {
-        std::vector<RowId> touched;
-        touched.reserve(updated.size());
-        for (const auto& [id, row] : updated) touched.push_back(id);
-        for (std::size_t i = 0; i < updated.size(); ++i) {
-            LEDGER_TRY_VOID(checkPrimaryKey(*s.table, updated[i].second[*pk], touched));
+    // PRIMARY KEY / UNIQUE: every new value against the untouched rows and
+    // against the other modified rows.
+    std::vector<RowId> touched;
+    touched.reserve(updated.size());
+    for (const auto& [id, row] : updated) touched.push_back(id);
+    for (std::size_t i = 0; i < updated.size(); ++i) {
+        LEDGER_TRY_VOID(checkUnique(*s.table, updated[i].second, touched));
+        for (std::size_t c = 0; c < s.table->columns.size(); ++c) {
+            const ColumnSchema& col = s.table->columns[c];
+            if (!(col.primaryKey || col.unique) || updated[i].second[c].isNull()) continue;
             for (std::size_t j = 0; j < i; ++j) {
-                if (Value::compare(updated[i].second[*pk], updated[j].second[*pk]).value() ==
-                    Ordering::Equal) {
+                if (updated[j].second[c].isNull()) continue;
+                if (Value::compare(updated[i].second[c], updated[j].second[c]).value() == Ordering::Equal) {
                     return makeError(ErrorCode::ConstraintViolation,
-                                     "duplicate primary key " + updated[i].second[*pk].toText() +
-                                         " in table '" + s.table->name + "'");
+                                     col.primaryKey
+                                         ? "duplicate primary key " + updated[i].second[c].toText() +
+                                               " in table '" + s.table->name + "'"
+                                         : "duplicate value " + updated[i].second[c].toText() +
+                                               " for UNIQUE column '" + col.name + "' in table '" +
+                                               s.table->name + "'");
                 }
             }
         }

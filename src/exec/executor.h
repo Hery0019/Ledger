@@ -105,8 +105,7 @@ private:
     // A SELECT (without its UNION members) down to sorted, distinct rows:
     // everything but OFFSET / LIMIT.
     Result<std::vector<Row>> collect(const BoundSelect& s);
-    Result<void> checkPrimaryKey(const TableSchema& table, const Value& key,
-                                 const std::vector<RowId>& ignore);
+    Result<void> checkUnique(const TableSchema& table, const Row& row, const std::vector<RowId>& ignore);
 
     IStorageEngine& engine_;
     Catalog& catalog_;
