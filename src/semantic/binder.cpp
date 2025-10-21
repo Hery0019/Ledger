@@ -206,7 +206,7 @@ private:
                 }
                 hasPrimaryKey = true;
             }
-            ColumnSchema column{c.name, c.type, c.primaryKey, c.notNull || c.primaryKey, std::nullopt};
+            ColumnSchema column{c.name, c.type, c.primaryKey, c.notNull || c.primaryKey, std::nullopt, c.unique};
             if (c.defaultExpr) {
                 // A DEFAULT is a constant: bound without any column in scope,
                 // it folds to a Value, then must fit the column like an

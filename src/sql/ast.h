@@ -139,6 +139,7 @@ struct ColumnDef {
     bool primaryKey;
     bool notNull;
     ExprPtr defaultExpr;  // DEFAULT <constant expression>, nullptr if absent
+    bool unique;
 };
 
 struct CreateTable {
