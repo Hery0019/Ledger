@@ -137,7 +137,7 @@ Result<std::vector<TableSchema>> FileEngine::loadSchemas() {
         }
         Table t;
         t.schema = std::move(schema).value();
-        t.index = PkIndex(t.schema);
+        t.indexes = TableIndexes(t.schema);
         tables_.emplace(name, std::move(t));
     }
     if (ec) return ioError("cannot list database directory", dir_, ec);
@@ -170,7 +170,7 @@ Result<void> FileEngine::createTable(const TableSchema& schema) {
 
     Table t;
     t.schema = schema;
-    t.index = PkIndex(schema);
+    t.indexes = TableIndexes(schema);
     t.loaded = true;  // brand-new table: nothing to replay
     tables_.emplace(schema.name, std::move(t));
     return {};
@@ -271,7 +271,7 @@ Result<void> FileEngine::loadRows(Table& t) {
     LEDGER_TRY(content, readWholeFile(path));
 
     t.rows.clear();
-    t.index = PkIndex(t.schema);
+    t.indexes = TableIndexes(t.schema);
     t.nextId = 1;
     t.tombstones = 0;
 
@@ -318,7 +318,7 @@ Result<void> FileEngine::loadRows(Table& t) {
                 return makeError(ErrorCode::Corruption,
                                  where + "tombstone for unknown row " + std::to_string(r.id));
             }
-            t.index.remove(victim->second);
+            t.indexes.remove(victim->second);
             t.rows.erase(victim);
             ++t.tombstones;
         } else {
@@ -328,7 +328,7 @@ Result<void> FileEngine::loadRows(Table& t) {
                 return makeError(ErrorCode::Corruption,
                                  where + "duplicate live row " + std::to_string(r.id));
             }
-            t.index.add(r.id, r.row);
+            t.indexes.add(r.id, r.row);
             t.rows.emplace(r.id, std::move(r.row));
             if (r.id >= t.nextId) t.nextId = r.id + 1;
         }
@@ -361,7 +361,7 @@ Result<RowId> FileEngine::insert(std::string_view table, const Row& row) {
     const RowId id = t->nextId;
     LEDGER_TRY_VOID(appendLine(*t, codec::encodeInsert(id, row)));
     t->rows.emplace(id, row);
-    t->index.add(id, row);
+    t->indexes.add(id, row);
     t->nextId = id + 1;
     return id;
 }
@@ -389,7 +389,7 @@ Result<void> FileEngine::update(std::string_view table, RowId id, const Row& row
     // Tombstone, then the new version with the same rowid.
     LEDGER_TRY_VOID(appendLine(*t, codec::encodeTombstone(id)));
     LEDGER_TRY_VOID(appendLine(*t, codec::encodeInsert(id, row)));
-    t->index.replace(id, it->second, row);
+    t->indexes.replace(id, it->second, row);
     it->second = row;
     ++t->tombstones;
     return maybeCompact(*t);
@@ -403,7 +403,7 @@ Result<void> FileEngine::remove(std::string_view table, RowId id) {
         return makeError(ErrorCode::NotFound, "row " + std::to_string(id) + " not found");
     }
     LEDGER_TRY_VOID(appendLine(*t, codec::encodeTombstone(id)));
-    t->index.remove(it->second);
+    t->indexes.remove(it->second);
     t->rows.erase(it);
     ++t->tombstones;
     return maybeCompact(*t);
@@ -422,24 +422,23 @@ Result<void> FileEngine::restore(std::string_view table, RowId id, const Row& ro
     // removed the old version, so the id is free again.
     LEDGER_TRY_VOID(appendLine(*t, codec::encodeInsert(id, row)));
     t->rows.emplace(id, row);
-    t->index.add(id, row);
+    t->indexes.add(id, row);
     if (id >= t->nextId) t->nextId = id + 1;
     return {};
 }
 
 bool FileEngine::indexed(std::string_view table, std::size_t column) const noexcept {
     const auto it = tables_.find(table);
-    return it != tables_.end() && it->second.index.column() == column;
+    return it != tables_.end() && it->second.indexes.has(column);
 }
 
 Result<std::optional<std::pair<RowId, Row>>> FileEngine::lookup(std::string_view table, std::size_t column,
                                                                 const Value& key) {
     const std::lock_guard<std::mutex> lock(mu_);
     LEDGER_TRY(t, loaded(table));
-    if (t->index.column() != column) {
-        return makeError(ErrorCode::Internal, "lookup on a column without an index");
-    }
-    const auto id = t->index.find(key);
+    const ColumnIndex* index = t->indexes.on(column);
+    if (!index) return makeError(ErrorCode::Internal, "lookup on a column without an index");
+    const auto id = index->find(key);
     if (!id) return std::optional<std::pair<RowId, Row>>{};
     return std::optional<std::pair<RowId, Row>>{std::pair{*id, t->rows.at(*id)}};
 }
