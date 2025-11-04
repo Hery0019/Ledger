@@ -75,7 +75,7 @@ private:
         std::size_t tombstones = 0;
         bool loaded = false;
         std::FILE* out = nullptr;  // rows.txt opened for append, nullptr until loaded
-        PkIndex index;             // rebuilt by loadRows
+        TableIndexes indexes;             // rebuilt by loadRows
     };
 
     [[nodiscard]] std::filesystem::path tableDir(std::string_view table) const;
