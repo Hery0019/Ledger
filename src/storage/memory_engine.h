@@ -33,7 +33,7 @@ private:
         TableSchema schema;
         std::map<RowId, Row> rows;
         RowId nextId = 1;
-        PkIndex index;
+        TableIndexes indexes;
     };
     Result<Table*> find(std::string_view table);
 
