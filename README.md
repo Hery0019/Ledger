@@ -9,7 +9,8 @@ meant for personal use afterwards.
 
 - `CREATE TABLE` / `DROP TABLE` — types `INT`, `FLOAT`, `TEXT`, `BOOL`;
   column constraints `PRIMARY KEY` (one per table, implies `NOT NULL`),
-  `NOT NULL`, `DEFAULT <constant>`, `UNIQUE` (NULLs never collide).
+  `NOT NULL`, `DEFAULT <constant>`, `UNIQUE` (NULLs never collide),
+  `CHECK (expr)` (a BOOL expression over the row; only FALSE rejects, NULL passes).
 - `INSERT INTO t [(cols)] VALUES (...)` — one row per statement.
 - `SELECT * | t.* | expr [AS alias], ... FROM t [AS a] [[INNER|LEFT] JOIN u [AS b] ON expr ...]
   [WHERE expr] [GROUP BY expr, ...] [HAVING expr] [ORDER BY expr [ASC|DESC], ...]
@@ -123,7 +124,7 @@ data/mydb/
   LOCK                 present while a process has the database open
   views.txt            ledger-views 1   then  <view>\t<escaped SELECT>, one per line
   users/
-    schema.txt         ledger-schema 1  then  <column> <TYPE> [PK] [NN] [UQ] [DEF:<value>|DEFNULL]
+    schema.txt         ledger-schema 1  then  <column> <TYPE> [PK] [NN] [UQ] [CHK:<expr>] [DEF:<value>|DEFNULL]
     rows.txt           ledger-rows 1    then  I <rowid>\t<fields>  or  D <rowid>
 ```
 
