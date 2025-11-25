@@ -228,7 +228,23 @@ std::optional<std::pair<std::size_t, const Value*>> pointLookupKey(const BoundSe
 
 // ---- DML -------------------------------------------------------------------
 
+// CHECK constraints: a row is refused only when a constraint evaluates to
+// FALSE; NULL (unknown) passes, as in SQL.
+Result<void> Executor::runChecks(const TableSchema& table, const std::vector<BoundCheck>& checks,
+                                 const Row& row) {
+    for (const auto& [column, expr] : checks) {
+        LEDGER_TRY(v, ev(*expr, row));
+        if (v.type() == DataType::Bool && !v.asBool()) {
+            return makeError(ErrorCode::ConstraintViolation, "CHECK constraint on column '" +
+                                                                 table.columns[column].name + "' failed: " +
+                                                                 table.columns[column].check);
+        }
+    }
+    return {};
+}
+
 Result<QueryResult> Executor::run(const BoundInsert& s) {
+    LEDGER_TRY_VOID(runChecks(*s.table, s.checks, s.row));
     LEDGER_TRY_VOID(checkUnique(*s.table, s.row, {}));
     LEDGER_TRY(id, engine_.insert(s.table->name, s.row));
     if (undo_) undo_->push_back(Undo{Undo::Kind::Insert, s.table->name, id, {}});
@@ -612,6 +628,7 @@ Result<QueryResult> Executor::run(const BoundUpdate& s) {
             }
             next[col] = std::move(v).value();
         }
+        if (auto c = runChecks(*s.table, s.checks, next); !c.ok()) return rowError(id, c.error());
         updated.emplace_back(id, std::move(next));
     }
 

@@ -106,6 +106,7 @@ private:
     // everything but OFFSET / LIMIT.
     Result<std::vector<Row>> collect(const BoundSelect& s);
     Result<void> checkUnique(const TableSchema& table, const Row& row, const std::vector<RowId>& ignore);
+    Result<void> runChecks(const TableSchema& table, const std::vector<BoundCheck>& checks, const Row& row);
 
     IStorageEngine& engine_;
     Catalog& catalog_;
