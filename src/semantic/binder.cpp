@@ -222,7 +222,53 @@ private:
             }
             schema.columns.push_back(std::move(column));
         }
+        // CHECK constraints may refer to any column of the new table, so they
+        // are bound once the whole schema is known. Only the text is kept: it
+        // is parsed and bound again by every INSERT / UPDATE.
+        const std::vector<RelColumn> columns = tableColumns(schema, schema.name);
+        const Scope scope{&columns, schema.name, false, false};
+        for (std::size_t i = 0; i < s.columns.size(); ++i) {
+            const ast::ColumnDef& c = s.columns[i];
+            if (!c.checkExpr) continue;
+            LEDGER_TRY_VOID(bindCheck(*c.checkExpr, scope, c.name));
+            schema.columns[i].check = c.checkSql;
+        }
         return BoundStatement{BoundCreateTable{std::move(schema)}};
+    }
+
+    // A CHECK expression: BOOL (or NULL) over the table's columns, without
+    // aggregates. Subqueries are already refused outside a SELECT.
+    Result<BoundExprPtr> bindCheck(const ast::Expr& e, const Scope& scope, const std::string& column) {
+        if (containsAggregate(e)) {
+            return errorAt(e, ErrorCode::SyntaxError, "aggregate functions are not allowed in CHECK");
+        }
+        LEDGER_TRY(bound, bindExpr(e, &scope));
+        if (bound->type != DataType::Bool && bound->type != DataType::Null) {
+            return errorAt(e, ErrorCode::TypeError,
+                           "CHECK on column '" + column + "' must be BOOL, got " + typeName(bound->type));
+        }
+        return bound;
+    }
+
+    // The stored CHECK constraints of a table, ready to be evaluated on a row
+    // by INSERT / UPDATE. A stored text that no longer parses or binds can
+    // only come from a hand-edited schema file.
+    Result<std::vector<BoundCheck>> bindChecks(const TableSchema& table, const Scope& scope) {
+        std::vector<BoundCheck> out;
+        for (std::size_t i = 0; i < table.columns.size(); ++i) {
+            const ColumnSchema& col = table.columns[i];
+            if (col.check.empty()) continue;
+            const auto corrupt = [&](const Error& e) {
+                return makeError(ErrorCode::Corruption, "CHECK on column '" + col.name + "' of table '" +
+                                                            table.name + "': " + e.message);
+            };
+            auto parsed = parseExpression(col.check);
+            if (!parsed.ok()) return corrupt(parsed.error());
+            auto bound = bindCheck(*parsed.value(), scope, col.name);
+            if (!bound.ok()) return corrupt(bound.error());
+            out.push_back(BoundCheck{i, std::move(bound).value()});
+        }
+        return out;
     }
 
     Result<BoundStatement> bindStatement(const ast::DropTable& s) {
@@ -356,7 +402,8 @@ private:
                                  "column '" + col.name + "' cannot be NULL");
             }
         }
-        return BoundStatement{BoundInsert{table, std::move(row)}};
+        LEDGER_TRY(checks, bindChecks(*table, scope));
+        return BoundStatement{BoundInsert{table, std::move(row), std::move(checks)}};
     }
 
     Result<BoundStatement> bindStatement(const ast::Select& s) {
@@ -514,7 +561,7 @@ private:
         const std::vector<RelColumn> columns = tableColumns(*table, table->name);
         const Scope scope{&columns, table->name, false, false};
 
-        BoundUpdate out{table, {}, nullptr};
+        BoundUpdate out{table, {}, nullptr, {}};
         std::set<std::size_t> seen;
         for (const auto& [name, expr] : s.assignments) {
             LEDGER_TRY(idx, scope.resolve(name));
@@ -527,6 +574,8 @@ private:
         }
         LEDGER_TRY(where, bindWhere(s.where, scope));
         out.where = std::move(where);
+        LEDGER_TRY(checks, bindChecks(*table, scope));
+        out.checks = std::move(checks);
         return BoundStatement{std::move(out)};
     }
 

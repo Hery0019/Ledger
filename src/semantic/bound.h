@@ -120,9 +120,16 @@ struct BoundDropTable {
     std::string table;
 };
 
+// A table's CHECK constraint, bound over the table's own columns.
+struct BoundCheck {
+    std::size_t column;  // the column carrying the constraint (for messages)
+    BoundExprPtr expr;   // BOOL or NULL typed; evaluated on the complete row
+};
+
 struct BoundInsert {
     const TableSchema* table;
     Row row;  // complete, in schema order, types already conforming
+    std::vector<BoundCheck> checks;
 };
 
 // Deep copy. Bound expressions are trees of unique_ptr; a view column's
@@ -243,6 +250,7 @@ struct BoundUpdate {
     const TableSchema* table;
     std::vector<std::pair<std::size_t, BoundExprPtr>> assignments;  // type conforms to the column
     BoundExprPtr where;
+    std::vector<BoundCheck> checks;
 };
 
 struct BoundDelete {
