@@ -140,6 +140,8 @@ struct ColumnDef {
     bool notNull;
     ExprPtr defaultExpr;  // DEFAULT <constant expression>, nullptr if absent
     bool unique;
+    ExprPtr checkExpr;     // CHECK (expr), nullptr if absent
+    std::string checkSql;  // the CHECK expression text, verbatim (stored in the schema)
 };
 
 struct CreateTable {

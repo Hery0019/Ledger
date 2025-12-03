@@ -1,5 +1,6 @@
 #include "sql/parser.h"
 
+#include <cctype>
 #include <initializer_list>
 #include <string>
 #include <utility>
@@ -23,6 +24,14 @@ public:
         if (at(TokenKind::Semicolon)) advance();
         if (!at(TokenKind::End)) return unexpected("end of input");
         return stmt;
+    }
+
+    // A lone expression (a CHECK constraint read back from a schema file),
+    // nothing after it.
+    Result<ExprPtr> runExpression() {
+        LEDGER_TRY(e, expression());
+        if (!at(TokenKind::End)) return unexpected("end of input");
+        return e;
     }
 
 private:
@@ -133,7 +142,7 @@ private:
         LEDGER_TRY(name, identifier());
         LEDGER_TRY(type, dataType());
 
-        ColumnDef col{std::move(name), type, false, false, nullptr, false};
+        ColumnDef col{std::move(name), type, false, false, nullptr, false, nullptr, {}};
         // Constraints in any order, each at most once.
         for (;;) {
             if (at(TokenKind::KwDefault)) {
@@ -145,6 +154,22 @@ private:
                 if (col.unique) return unexpected("a single UNIQUE constraint");
                 advance();
                 col.unique = true;
+            } else if (at(TokenKind::KwCheck)) {
+                if (col.checkExpr) return unexpected("a single CHECK constraint");
+                advance();
+                LEDGER_TRY_VOID(expect(TokenKind::LParen));
+                // The expression text is kept verbatim: it is what the schema
+                // file stores and what .schema shows.
+                const std::size_t start = peek().offset;
+                LEDGER_TRY(e, expression());
+                const std::size_t end = peek().offset;
+                LEDGER_TRY_VOID(expect(TokenKind::RParen));
+                col.checkExpr = std::move(e);
+                std::string_view text = src_.substr(start, end - start);
+                while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back()))) {
+                    text.remove_suffix(1);
+                }
+                col.checkSql = std::string(text);
             } else if (at(TokenKind::KwPrimary)) {
                 if (col.primaryKey) return unexpected("a single PRIMARY KEY constraint");
                 advance();
@@ -651,6 +676,11 @@ private:
 Result<ast::Statement> parse(std::string_view sql) {
     LEDGER_TRY(tokens, tokenize(sql));
     return Parser{std::move(tokens), sql}.run();
+}
+
+Result<ast::ExprPtr> parseExpression(std::string_view sql) {
+    LEDGER_TRY(tokens, tokenize(sql));
+    return Parser{std::move(tokens), sql}.runExpression();
 }
 
 }  // namespace ledger
