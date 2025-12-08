@@ -24,4 +24,8 @@ namespace ledger {
 //   non-associative: `a = b = c` is rejected)  <  + -  <  * /  <  unary -.
 Result<ast::Statement> parse(std::string_view sql);
 
+// Parses a single expression with nothing after it (a CHECK constraint read
+// back from a schema file).
+Result<ast::ExprPtr> parseExpression(std::string_view sql);
+
 }  // namespace ledger
