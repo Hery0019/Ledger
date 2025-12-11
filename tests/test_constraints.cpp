@@ -1,6 +1,7 @@
 #include "doctest.h"
 
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -146,6 +147,92 @@ TEST_CASE("UNIQUE columns are indexed: point lookups and reopen") {
     CHECK(codec::encodeSchema(TableSchema{"u", {ColumnSchema{"e", DataType::Text, false, true, std::nullopt, true}}}) ==
           "ledger-schema 1\ne TEXT NN UQ\n");
     CHECK(db.fail("CREATE TABLE v (a INT UNIQUE UNIQUE)").message == "1:30: expected a single UNIQUE constraint, got 'UNIQUE'");
+}
+
+// ---- CHECK -----------------------------------------------------------------
+
+TEST_CASE("CHECK refuses rows that make the expression FALSE; NULL passes") {
+    Db db;
+    db.run("CREATE TABLE p (id INT PRIMARY KEY, age INT CHECK (age >= 0 AND age < 150), "
+           "kind TEXT CHECK ( kind IN ('a', 'b') ), lo INT, hi INT CHECK (hi > lo))");
+    db.run("INSERT INTO p VALUES (1, 30, 'a', 1, 2)");
+    db.run("INSERT INTO p VALUES (2, NULL, NULL, NULL, 5)");  // unknown is not FALSE
+    auto e = db.fail("INSERT INTO p VALUES (3, -1, 'a', 1, 2)");
+    CHECK(e.code == ErrorCode::ConstraintViolation);
+    CHECK(e.message == "CHECK constraint on column 'age' failed: age >= 0 AND age < 150");
+    CHECK(db.fail("INSERT INTO p VALUES (3, 1, 'c', 1, 2)").message ==
+          "CHECK constraint on column 'kind' failed: kind IN ('a', 'b')");
+    CHECK(db.fail("INSERT INTO p VALUES (3, 1, 'a', 5, 2)").message ==
+          "CHECK constraint on column 'hi' failed: hi > lo");  // a CHECK may read other columns
+    CHECK(db.fail("INSERT INTO p (id, age) VALUES (3, 200)").message ==
+          "CHECK constraint on column 'age' failed: age >= 0 AND age < 150");
+    CHECK(db.rows("SELECT * FROM p").size() == 2);
+
+    db.run("UPDATE p SET age = age + 1 WHERE id = 1");
+    e = db.fail("UPDATE p SET age = age * 10");
+    CHECK(e.message == "row 1: CHECK constraint on column 'age' failed: age >= 0 AND age < 150");
+    CHECK(db.fail("UPDATE p SET lo = 10 WHERE id = 1").message ==
+          "row 1: CHECK constraint on column 'hi' failed: hi > lo");  // changing the other side counts too
+    CHECK(db.rows("SELECT age FROM p WHERE id = 1")[0] == Row{i(31)});  // nothing written
+    CHECK(db.catalog.find("p")->columns[1].check == "age >= 0 AND age < 150");
+    CHECK(db.catalog.find("p")->columns[0].check.empty());
+}
+
+TEST_CASE("CHECK errors at CREATE TABLE") {
+    Db db;
+    auto e = db.fail("CREATE TABLE t (a INT CHECK (a + 1))");
+    CHECK(e.code == ErrorCode::TypeError);
+    CHECK(e.message == "1:30: CHECK on column 'a' must be BOOL, got INT");
+    CHECK(db.fail("CREATE TABLE t (a INT CHECK (b > 0))").message == "1:30: unknown column 'b' in table 't'");
+    CHECK(db.fail("CREATE TABLE t (a INT CHECK (count(*) > 0))").message ==
+          "1:30: aggregate functions are not allowed in CHECK");
+    CHECK(db.fail("CREATE TABLE t (a INT CHECK (a IN (SELECT a FROM t)))").message ==
+          "1:30: subqueries are only allowed inside a SELECT");
+    CHECK(db.fail("CREATE TABLE t (a INT CHECK (a > 0) CHECK (a < 9))").message ==
+          "1:37: expected a single CHECK constraint, got 'CHECK'");
+    CHECK(db.fail("CREATE TABLE t (a INT CHECK a > 0)").message == "1:29: expected '(', got identifier 'a'");
+    CHECK(db.fail("CREATE TABLE t (a INT CHECK (a > 'x'))").code == ErrorCode::TypeError);
+}
+
+TEST_CASE("CHECK is persisted in schema.txt and survives reopen") {
+    using namespace ledger::codec;
+    TableSchema s{"t", {ColumnSchema{"a", DataType::Int, false, false}, ColumnSchema{"b", DataType::Text, false, true}}};
+    s.columns[0].check = "a > 0 AND a <> 7";
+    s.columns[1].check = "b LIKE 'x\\t%'";
+    const std::string encoded = encodeSchema(s);
+    CHECK(encoded == "ledger-schema 1\n"
+                     "a INT CHK:a\\s>\\s0\\sAND\\sa\\s<>\\s7\n"
+                     "b TEXT NN CHK:b\\sLIKE\\s'x\\\\t%'\n");
+    const auto back = decodeSchema("t", encoded).value();
+    CHECK(back.columns[0].check == "a > 0 AND a <> 7");
+    CHECK(back.columns[1].check == "b LIKE 'x\\t%'");
+    CHECK(decodeSchema("t", "ledger-schema 1\na INT CHK:\n").error().code == ErrorCode::Corruption);
+
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "ledger_test_check";
+    fs::remove_all(dir);
+    {
+        auto d = Database::open(dir).value();
+        REQUIRE(d->execute("CREATE TABLE t (id INT PRIMARY KEY, n INT CHECK (n BETWEEN 1 AND 5))").ok());
+    }
+    {
+        auto d = Database::open(dir).value();
+        CHECK(d->catalog().find("t")->columns[1].check == "n BETWEEN 1 AND 5");
+        CHECK(d->execute("INSERT INTO t VALUES (1, 9)").error().code == ErrorCode::ConstraintViolation);
+        REQUIRE(d->execute("INSERT INTO t VALUES (1, 3)").ok());
+    }
+    // A hand-edited schema whose CHECK no longer makes sense is reported as
+    // corruption by the first write, not by opening the database.
+    {
+        std::ofstream(dir / "t" / "schema.txt", std::ios::trunc | std::ios::binary)
+            << "ledger-schema 1\nid INT PK\nn INT CHK:zz\\s>\\s0\n";
+        auto d = Database::open(dir).value();
+        auto r = d->execute("INSERT INTO t VALUES (2, 3)");
+        REQUIRE_FALSE(r.ok());
+        CHECK(r.error().code == ErrorCode::Corruption);
+        CHECK(r.error().message == "CHECK on column 'n' of table 't': 1:1: unknown column 'zz' in table 't'");
+    }
+    fs::remove_all(dir);
 }
 
 TEST_CASE("DEFAULT is persisted in schema.txt and survives reopen") {
