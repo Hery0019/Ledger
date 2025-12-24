@@ -10,6 +10,16 @@
 
 namespace ledger {
 
+// REFERENCES parent(column): every non-NULL value of the column must exist
+// in the parent's column, which is PRIMARY KEY or UNIQUE (so the check is an
+// index lookup). Deleting a referenced parent row is refused, or deletes the
+// referencing rows when `cascade` is set (ON DELETE CASCADE).
+struct ForeignKey {
+    std::string table;   // lowercase; may be the column's own table
+    std::string column;  // lowercase
+    bool cascade;
+};
+
 struct ColumnSchema {
     std::string name;  // lowercase
     DataType type;     // never DataType::Null
@@ -22,6 +32,7 @@ struct ColumnSchema {
     // CHECK: a BOOL expression over the table's columns that every row must
     // not make FALSE (NULL passes). Kept as SQL text; empty = no constraint.
     std::string check;
+    std::optional<ForeignKey> reference;
 
     // A constructor rather than aggregate initialization, so that adding a
     // constraint field never touches the many `ColumnSchema{...}` call sites.
