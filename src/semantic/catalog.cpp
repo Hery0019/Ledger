@@ -42,6 +42,18 @@ std::vector<std::string_view> Catalog::tableNames() const {
     return names;
 }
 
+std::vector<std::pair<const TableSchema*, std::size_t>> Catalog::referencing(std::string_view table) const {
+    std::vector<std::pair<const TableSchema*, std::size_t>> out;
+    for (const auto& [name, schema] : tables_) {
+        for (std::size_t c = 0; c < schema.columns.size(); ++c) {
+            if (schema.columns[c].reference && schema.columns[c].reference->table == table) {
+                out.emplace_back(&schema, c);
+            }
+        }
+    }
+    return out;
+}
+
 // ---- views -----------------------------------------------------------------
 
 const ViewEntry* Catalog::findView(std::string_view view) const noexcept {

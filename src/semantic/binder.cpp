@@ -233,7 +233,41 @@ private:
             LEDGER_TRY_VOID(bindCheck(*c.checkExpr, scope, c.name));
             schema.columns[i].check = c.checkSql;
         }
+        for (std::size_t i = 0; i < s.columns.size(); ++i) {
+            if (!s.columns[i].reference) continue;
+            LEDGER_TRY(fk, bindReference(schema, i, *s.columns[i].reference));
+            schema.columns[i].reference = std::move(fk);
+        }
         return BoundStatement{BoundCreateTable{std::move(schema)}};
+    }
+
+    // REFERENCES parent(column): the parent is an existing table (or the
+    // table being created, for a self-reference), the column is PRIMARY KEY
+    // or UNIQUE and has the same type as the referencing column.
+    Result<ForeignKey> bindReference(const TableSchema& schema, std::size_t column, const ast::ForeignKeyRef& ref) {
+        const std::string prefix = "column '" + schema.columns[column].name + "' REFERENCES " + ref.table + "(" +
+                                   ref.column + "): ";
+        const TableSchema* parent = ref.table == schema.name ? &schema : catalog_.find(ref.table);
+        if (!parent) {
+            if (catalog_.findView(ref.table)) {
+                return makeError(ErrorCode::SyntaxError, prefix + "'" + ref.table + "' is a view");
+            }
+            return makeError(ErrorCode::NotFound, prefix + "unknown table '" + ref.table + "'");
+        }
+        const auto target = parent->columnIndex(ref.column);
+        if (!target) {
+            return makeError(ErrorCode::NotFound,
+                             prefix + "unknown column '" + ref.column + "' in table '" + ref.table + "'");
+        }
+        const ColumnSchema& parentColumn = parent->columns[*target];
+        if (!parentColumn.primaryKey && !parentColumn.unique) {
+            return makeError(ErrorCode::SyntaxError, prefix + "the referenced column must be PRIMARY KEY or UNIQUE");
+        }
+        if (parentColumn.type != schema.columns[column].type) {
+            return makeError(ErrorCode::TypeError, prefix + "type " + typeName(schema.columns[column].type) +
+                                                       " does not match " + typeName(parentColumn.type));
+        }
+        return ForeignKey{ref.table, ref.column, ref.cascade};
     }
 
     // A CHECK expression: BOOL (or NULL) over the table's columns, without
@@ -280,6 +314,13 @@ private:
             return makeError(ErrorCode::NotFound, "unknown table '" + s.table + "'");
         }
         LEDGER_TRY_VOID(checkNoDependents(s.table, "table"));
+        // A table can only go with its referencing tables; its own
+        // self-references do not hold it back.
+        for (const auto& [child, column] : catalog_.referencing(s.table)) {
+            if (child->name == s.table) continue;
+            return makeError(ErrorCode::ConstraintViolation, "table '" + s.table + "' is referenced by " +
+                                                                 child->name + "." + child->columns[column].name);
+        }
         return BoundStatement{BoundDropTable{s.table}};
     }
 
