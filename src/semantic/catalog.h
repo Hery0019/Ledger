@@ -38,6 +38,9 @@ public:
     Result<void> remove(std::string_view table);   // NotFound
 
     [[nodiscard]] std::vector<std::string_view> tableNames() const;  // sorted
+    // Every (child table, column) whose REFERENCES targets `table`, the
+    // table's self-references included. Sorted by child name.
+    [[nodiscard]] std::vector<std::pair<const TableSchema*, std::size_t>> referencing(std::string_view table) const;
     [[nodiscard]] std::size_t size() const noexcept { return tables_.size(); }
 
     // ---- views -------------------------------------------------------------
