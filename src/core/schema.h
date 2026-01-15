@@ -33,6 +33,9 @@ struct ColumnSchema {
     // not make FALSE (NULL passes). Kept as SQL text; empty = no constraint.
     std::string check;
     std::optional<ForeignKey> reference;
+    // AUTOINCREMENT (INT PRIMARY KEY only): an INSERT that omits the column,
+    // or gives NULL, takes the largest live key + 1 (1 for an empty table).
+    bool autoIncrement = false;
 
     // A constructor rather than aggregate initialization, so that adding a
     // constraint field never touches the many `ColumnSchema{...}` call sites.

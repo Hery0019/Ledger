@@ -184,6 +184,7 @@ bool dotCommand(const Console& con, Database& db, const std::string& line, bool&
                 if (i) std::cout << ", ";
                 std::cout << c.name << ' ' << con.paint(ansi::magenta, dataTypeName(c.type));
                 if (c.primaryKey) std::cout << ' ' << con.paint(ansi::dim, "PRIMARY KEY");
+                if (c.autoIncrement) std::cout << ' ' << con.paint(ansi::dim, "AUTOINCREMENT");
                 else if (c.notNull) std::cout << ' ' << con.paint(ansi::dim, "NOT NULL");
                 if (c.unique) std::cout << ' ' << con.paint(ansi::dim, "UNIQUE");
                 if (!c.check.empty()) std::cout << ' ' << con.paint(ansi::dim, "CHECK") << " (" << c.check << ')';
