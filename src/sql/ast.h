@@ -150,6 +150,7 @@ struct ColumnDef {
     ExprPtr checkExpr;     // CHECK (expr), nullptr if absent
     std::string checkSql;  // the CHECK expression text, verbatim (stored in the schema)
     std::optional<ForeignKeyRef> reference;
+    bool autoIncrement;
 };
 
 struct CreateTable {

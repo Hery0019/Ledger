@@ -130,6 +130,8 @@ struct BoundInsert {
     const TableSchema* table;
     Row row;  // complete, in schema order, types already conforming
     std::vector<BoundCheck> checks;
+    // AUTOINCREMENT column left to the executor to fill (its row slot is NULL).
+    std::optional<std::size_t> autoColumn;
 };
 
 // Deep copy. Bound expressions are trees of unique_ptr; a view column's
