@@ -54,6 +54,9 @@ public:
     [[nodiscard]] virtual bool indexed(std::string_view table, std::size_t column) const noexcept = 0;
     virtual Result<std::optional<std::pair<RowId, Row>>> lookup(std::string_view table, std::size_t column,
                                                                 const Value& key) = 0;
+    // Largest live key of an indexed column (AUTOINCREMENT); nullopt when the
+    // table has no row with a value there. Internal on a column without index.
+    virtual Result<std::optional<Value>> maxKey(std::string_view table, std::size_t column) = 0;
 
     // Rewrites the rows file without tombstones. The engine may also trigger
     // it on its own.
