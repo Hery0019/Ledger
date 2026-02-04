@@ -443,6 +443,14 @@ Result<std::optional<std::pair<RowId, Row>>> FileEngine::lookup(std::string_view
     return std::optional<std::pair<RowId, Row>>{std::pair{*id, t->rows.at(*id)}};
 }
 
+Result<std::optional<Value>> FileEngine::maxKey(std::string_view table, std::size_t column) {
+    const std::lock_guard<std::mutex> lock(mu_);
+    LEDGER_TRY(t, loaded(table));
+    const ColumnIndex* index = t->indexes.on(column);
+    if (!index) return makeError(ErrorCode::Internal, "maxKey on a column without an index");
+    return index->maxKey();
+}
+
 // ---- compaction ------------------------------------------------------------
 
 Result<void> FileEngine::maybeCompact(Table& t) {
