@@ -100,6 +100,13 @@ Result<std::optional<std::pair<RowId, Row>>> MemoryEngine::lookup(std::string_vi
     return std::optional<std::pair<RowId, Row>>{std::pair{*id, t->rows.at(*id)}};
 }
 
+Result<std::optional<Value>> MemoryEngine::maxKey(std::string_view table, std::size_t column) {
+    LEDGER_TRY(t, find(table));
+    const ColumnIndex* index = t->indexes.on(column);
+    if (!index) return makeError(ErrorCode::Internal, "maxKey on a column without an index");
+    return index->maxKey();
+}
+
 Result<void> MemoryEngine::compact(std::string_view table) {
     LEDGER_TRY_VOID(find(table));
     return {};  // nothing to compact in memory
