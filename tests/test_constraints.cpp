@@ -378,6 +378,71 @@ TEST_CASE("REFERENCES is persisted in schema.txt and survives reopen") {
     fs::remove_all(dir);
 }
 
+// ---- AUTOINCREMENT ---------------------------------------------------------
+
+TEST_CASE("AUTOINCREMENT hands out max + 1 when the key is omitted or NULL") {
+    Db db;
+    db.run("CREATE TABLE t (id INT PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL)");
+    db.run("INSERT INTO t (name) VALUES ('a')");       // 1
+    db.run("INSERT INTO t VALUES (NULL, 'b')");        // 2
+    db.run("INSERT INTO t VALUES (10, 'c')");          // explicit values are kept
+    db.run("INSERT INTO t (name) VALUES ('d')");       // 11
+    CHECK(db.rows("SELECT id, name FROM t ORDER BY id") ==
+          std::vector<Row>{Row{i(1), t("a")}, Row{i(2), t("b")}, Row{i(10), t("c")}, Row{i(11), t("d")}});
+    db.run("DELETE FROM t WHERE id = 11");
+    db.run("INSERT INTO t (name) VALUES ('e')");       // 11 again: max + 1, not a counter
+    CHECK(db.rows("SELECT id FROM t WHERE name = 'e'") == std::vector<Row>{Row{i(11)}});
+    CHECK(db.fail("INSERT INTO t VALUES (11, 'dup')").code == ErrorCode::ConstraintViolation);
+    db.run("INSERT INTO t VALUES (-5, 'neg')");
+    db.run("DELETE FROM t WHERE id > 0");
+    db.run("INSERT INTO t (name) VALUES ('f')");       // only -5 left: starts back at 1
+    CHECK(db.rows("SELECT id FROM t WHERE name = 'f'") == std::vector<Row>{Row{i(1)}});
+    db.run("INSERT INTO t VALUES (9223372036854775807, 'top')");
+    auto e = db.fail("INSERT INTO t (name) VALUES ('g')");
+    CHECK(e.code == ErrorCode::TypeError);  // like any integer overflow
+    CHECK(e.message == "AUTOINCREMENT column 'id' is exhausted");
+    CHECK(db.catalog.find("t")->columns[0].autoIncrement);
+
+    // A rolled back INSERT frees its key.
+    db.run("DELETE FROM t");
+    db.run("BEGIN");
+    db.run("INSERT INTO t (name) VALUES ('x')");  // 1
+    db.run("ROLLBACK");
+    db.run("INSERT INTO t (name) VALUES ('y')");
+    CHECK(db.rows("SELECT id FROM t") == std::vector<Row>{Row{i(1)}});
+}
+
+TEST_CASE("AUTOINCREMENT errors at CREATE TABLE; persisted as AI") {
+    Db db;
+    CHECK(db.fail("CREATE TABLE t (id TEXT PRIMARY KEY AUTOINCREMENT)").message ==
+          "column 'id': AUTOINCREMENT requires INT PRIMARY KEY");
+    CHECK(db.fail("CREATE TABLE t (id INT AUTOINCREMENT)").message ==
+          "column 'id': AUTOINCREMENT requires INT PRIMARY KEY");
+    CHECK(db.fail("CREATE TABLE t (id INT PRIMARY KEY AUTOINCREMENT DEFAULT 1)").message ==
+          "column 'id': AUTOINCREMENT and DEFAULT are exclusive");
+    CHECK(db.fail("CREATE TABLE t (id INT AUTOINCREMENT AUTOINCREMENT PRIMARY KEY)").message ==
+          "1:38: expected a single AUTOINCREMENT, got 'AUTOINCREMENT'");
+    db.run("CREATE TABLE t (id INT AUTOINCREMENT PRIMARY KEY)");  // any order
+    CHECK(codec::encodeSchema(*db.catalog.find("t")) == "ledger-schema 1\nid INT PK AI\n");
+    CHECK(codec::decodeSchema("t", "ledger-schema 1\nid INT PK AI\n").value().columns[0].autoIncrement);
+
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "ledger_test_autoincrement";
+    fs::remove_all(dir);
+    {
+        auto d = Database::open(dir).value();
+        REQUIRE(d->execute("CREATE TABLE t (id INT PRIMARY KEY AUTOINCREMENT, v INT)").ok());
+        REQUIRE(d->execute("INSERT INTO t (v) VALUES (1)").ok());
+        REQUIRE(d->execute("INSERT INTO t (v) VALUES (2)").ok());
+    }
+    {
+        auto d = Database::open(dir).value();
+        REQUIRE(d->execute("INSERT INTO t (v) VALUES (3)").ok());
+        CHECK(d->execute("SELECT id FROM t WHERE v = 3").value().rows == std::vector<Row>{Row{i(3)}});
+    }
+    fs::remove_all(dir);
+}
+
 TEST_CASE("DEFAULT is persisted in schema.txt and survives reopen") {
     using namespace ledger::codec;
     TableSchema s{"t", {ColumnSchema{"a", DataType::Text, false, false, t("two words\tand\\tab")},
