@@ -120,6 +120,41 @@ sequences (the `+---+` tables shown above). `NO_COLOR=1` forces plain output;
 
 Exit codes: `0` ok, `1` SQL or database error, `2` usage error.
 
+## HTTP server (ledgerd)
+
+`ledgerd` serves one database over HTTP, so that applications in any language
+can use it without linking the engine. The ledgerd process is the single
+owner of the database (the `LOCK` file keeps everyone else out); clients
+never touch the files — they POST SQL and read JSON back.
+
+```sh
+./build/ledgerd mydb                # http://127.0.0.1:5433, same data root as ledger
+./build/ledgerd mydb --port 8080
+```
+
+- `POST /query` — body: one or more `;`-separated statements, run in order,
+  stopping at the first error. Reply `200`: `{"results": [...]}` with one
+  entry per statement — `{"kind":"select","columns":[...],"rows":[[...]]}`,
+  `{"kind":"dml","affected":n}` or `{"kind":"ddl"}` — plus `"warnings"` when
+  the engine reported any. On error, `400` (client mistake) or `500`
+  (IO/corruption): `{"error":{"code":...,"message":...,"line":...},
+  "results":[...]}` where `results` holds the statements already applied.
+- `GET /health` — `{"ok":true,"database":"..."}`.
+
+```sh
+$ curl -s -X POST http://127.0.0.1:5433/query -d "SELECT * FROM users;"
+{"results":[{"kind":"select","columns":["id","name","score"],"rows":[[1,"Alice",3.5],[2,"Bob",null]]}]}
+```
+
+SQL values map onto JSON as INT/FLOAT → number, TEXT → string, BOOL →
+true/false, NULL → null. Requests are served one at a time, and a request is
+a session: a transaction must begin and end within a single body
+(`BEGIN; ...; COMMIT;`); a transaction left open — or broken by an error —
+is rolled back, exactly like a REPL session closing mid-transaction.
+
+There is no authentication: keep it on localhost, or put something that
+authenticates in front.
+
 ## On-disk format
 
 One directory per database, one sub-directory per table:
@@ -143,7 +178,7 @@ is escaped (`\\ \t \n \r`).
 Strict layers, downward dependencies only:
 
 ```
-sql (lexer, parser, ast)  →  semantic (catalog, binder, eval)  →  exec  →  cli
+sql (lexer, parser, ast)  →  semantic (catalog, binder, eval)  →  exec  →  cli  →  server (ledgerd)
                                                  ↘  storage (IStorageEngine: FileEngine, MemoryEngine)
 core: Result<T> (no exceptions), Value, Row, TableSchema
 ```
