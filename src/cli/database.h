@@ -54,6 +54,13 @@ private:
 std::filesystem::path resolveDatabasePath(std::string_view arg, const char* envRoot,
                                           const std::filesystem::path& defaultRoot = ".");
 
+// Default root for bare database names, shared by the ledger and ledgerd
+// binaries: the parent of the directory holding the executable when that
+// directory is a build directory (`build/`, `build-san/` ...), otherwise the
+// executable's own directory. Falls back to the current directory if the
+// executable path cannot be determined.
+std::filesystem::path projectRoot();
+
 inline constexpr std::string_view kDefaultDataDir = "data";
 
 // Splits a text into statements on the `;` characters that sit outside a

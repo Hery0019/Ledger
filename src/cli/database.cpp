@@ -3,6 +3,16 @@
 #include <algorithm>
 #include <utility>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 #include "sql/parser.h"
 
 namespace ledger {
@@ -43,6 +53,24 @@ std::filesystem::path resolveDatabasePath(std::string_view arg, const char* envR
                                            ? std::filesystem::path(envRoot)
                                            : defaultRoot / std::filesystem::path(kDefaultDataDir);
     return root / std::filesystem::path(arg);
+}
+
+std::filesystem::path projectRoot() {
+    std::filesystem::path exe;
+#ifdef _WIN32
+    wchar_t buf[MAX_PATH];
+    const DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return ".";
+    exe = std::filesystem::path(buf);
+#else
+    std::error_code ec;
+    exe = std::filesystem::read_symlink("/proc/self/exe", ec);
+    if (ec) return ".";
+#endif
+    const std::filesystem::path dir = exe.parent_path();
+    const std::string name = dir.filename().string();
+    if (name.rfind("build", 0) == 0) return dir.parent_path();
+    return dir;
 }
 
 // ---- splitting -------------------------------------------------------------
