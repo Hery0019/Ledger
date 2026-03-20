@@ -17,7 +17,9 @@ target_compile_options(ledger_warnings INTERFACE
 
 # ---- core -------------------------------------------------------------------
 add_library(ledger_core
+  src/core/password.cpp
   src/core/result.cpp
+  src/core/sha256.cpp
   src/core/value.cpp
 )
 target_include_directories(ledger_core PUBLIC src)
@@ -100,6 +102,7 @@ add_executable(ledger_tests
   tests/test_value.cpp
   tests/test_lexer.cpp
   tests/test_parser.cpp
+  tests/test_password.cpp
   tests/test_catalog.cpp
   tests/test_eval.cpp
   tests/test_binder.cpp
