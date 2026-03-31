@@ -123,6 +123,7 @@ add_executable(ledger_tests
   tests/test_server_handler.cpp
   tests/test_server_http.cpp
   tests/test_server_json.cpp
+  tests/test_users.cpp
 )
 # third_party (doctest, httplib) comes as a system include via ledger_httplib.
 target_link_libraries(ledger_tests PRIVATE ledger_core ledger_sql ledger_semantic ledger_storage ledger_exec ledger_cli ledger_server ledger_httplib)
