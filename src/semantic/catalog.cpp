@@ -104,4 +104,52 @@ std::vector<std::string_view> Catalog::dependents(std::string_view name) const {
     return out;
 }
 
+// ---- users -------------------------------------------------------------------
+
+const UserDef* Catalog::findUser(std::string_view name) const noexcept {
+    const auto it = users_.find(name);
+    return it == users_.end() ? nullptr : &it->second;
+}
+
+Result<void> Catalog::addUser(UserDef user) {
+    if (findUser(user.name)) {
+        return makeError(ErrorCode::AlreadyExists, "user '" + user.name + "' already exists");
+    }
+    std::string name = user.name;
+    users_.emplace(std::move(name), std::move(user));
+    return {};
+}
+
+Result<void> Catalog::replaceUser(UserDef user) {
+    const auto it = users_.find(user.name);
+    if (it == users_.end()) {
+        return makeError(ErrorCode::NotFound, "unknown user '" + user.name + "'");
+    }
+    it->second = std::move(user);
+    return {};
+}
+
+Result<void> Catalog::removeUser(std::string_view name) {
+    const auto it = users_.find(name);
+    if (it == users_.end()) {
+        return makeError(ErrorCode::NotFound, "unknown user '" + std::string(name) + "'");
+    }
+    users_.erase(it);
+    return {};
+}
+
+std::vector<UserDef> Catalog::users() const {
+    std::vector<UserDef> out;
+    out.reserve(users_.size());
+    for (const auto& [name, user] : users_) out.push_back(user);
+    return out;
+}
+
+std::vector<std::string_view> Catalog::userNames() const {
+    std::vector<std::string_view> names;
+    names.reserve(users_.size());
+    for (const auto& [name, user] : users_) names.push_back(name);
+    return names;
+}
+
 }  // namespace ledger
