@@ -103,8 +103,9 @@ private:
                 return Statement{Begin{}};
             case TokenKind::KwCommit:  advance(); return Statement{Commit{}};
             case TokenKind::KwRollback: advance(); return Statement{Rollback{}};
+            case TokenKind::KwAlter:   return alterUser();
             default:
-                return unexpected("statement (CREATE, DROP, INSERT, SELECT, UPDATE, DELETE, BEGIN, COMMIT or ROLLBACK)");
+                return unexpected("statement (CREATE, DROP, ALTER, INSERT, SELECT, UPDATE, DELETE, BEGIN, COMMIT or ROLLBACK)");
         }
     }
 
@@ -112,14 +113,51 @@ private:
         advance();  // CREATE
         if (at(TokenKind::KwView)) return createView();
         if (at(TokenKind::KwTable)) return createTable();
-        return unexpected("'TABLE' or 'VIEW'");
+        if (at(TokenKind::KwUser)) return createUser();
+        return unexpected("'TABLE', 'VIEW' or 'USER'");
     }
 
     Result<Statement> drop() {
         advance();  // DROP
         if (at(TokenKind::KwView)) return dropView();
         if (at(TokenKind::KwTable)) return dropTable();
-        return unexpected("'TABLE' or 'VIEW'");
+        if (at(TokenKind::KwUser)) return dropUser();
+        return unexpected("'TABLE', 'VIEW' or 'USER'");
+    }
+
+    // ---- users ---------------------------------------------------------------
+
+    // PASSWORD 'secret' — a non-empty string literal (an identifier would be
+    // folded to lowercase, and a password is not an identifier).
+    Result<std::string> passwordClause() {
+        LEDGER_TRY_VOID(expect(TokenKind::KwPassword));
+        if (!at(TokenKind::String)) return unexpected("a password string ('...')");
+        if (peek().text.empty()) return errorAt(peek(), "password must not be empty");
+        return advance().text;
+    }
+
+    // CREATE USER name PASSWORD 'secret'
+    Result<Statement> createUser() {
+        advance();  // USER
+        LEDGER_TRY(name, identifier());
+        LEDGER_TRY(password, passwordClause());
+        return Statement{CreateUser{std::move(name), std::move(password)}};
+    }
+
+    // ALTER USER name PASSWORD 'new' — the only ALTER statement in v1.
+    Result<Statement> alterUser() {
+        advance();  // ALTER
+        LEDGER_TRY_VOID(expect(TokenKind::KwUser));
+        LEDGER_TRY(name, identifier());
+        LEDGER_TRY(password, passwordClause());
+        return Statement{AlterUser{std::move(name), std::move(password)}};
+    }
+
+    // DROP USER name
+    Result<Statement> dropUser() {
+        advance();  // USER
+        LEDGER_TRY(name, identifier());
+        return Statement{DropUser{std::move(name)}};
     }
 
     // CREATE TABLE name ( col type [PRIMARY KEY] [NOT NULL] {, ...} )
