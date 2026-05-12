@@ -50,6 +50,8 @@ public:
     Result<std::vector<TableSchema>> loadSchemas() override { return inner_.loadSchemas(); }
     Result<void> saveViews(const std::vector<ViewDef>& v) override { return inner_.saveViews(v); }
     Result<std::vector<ViewDef>> loadViews() override { return inner_.loadViews(); }
+    Result<void> saveUsers(const std::vector<UserDef>& u) override { return inner_.saveUsers(u); }
+    Result<std::vector<UserDef>> loadUsers() override { return inner_.loadUsers(); }
 
 private:
     IStorageEngine& inner_;

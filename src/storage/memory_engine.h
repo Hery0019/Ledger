@@ -28,6 +28,8 @@ public:
     Result<std::vector<TableSchema>> loadSchemas() override;
     Result<void> saveViews(const std::vector<ViewDef>& views) override;
     Result<std::vector<ViewDef>> loadViews() override;
+    Result<void> saveUsers(const std::vector<UserDef>& users) override;
+    Result<std::vector<UserDef>> loadUsers() override;
 
 private:
     struct Table {
@@ -40,6 +42,7 @@ private:
 
     std::map<std::string, Table, std::less<>> tables_;
     std::vector<ViewDef> views_;
+    std::vector<UserDef> users_;
 };
 
 }  // namespace ledger
