@@ -98,7 +98,7 @@ TEST_CASE("CREATE TABLE constraints in any order, each at most once") {
 }
 
 TEST_CASE("CREATE TABLE syntax errors") {
-    CHECK(errorOf("CREATE t (a INT)") == "1:8: expected 'TABLE' or 'VIEW', got identifier 't'");
+    CHECK(errorOf("CREATE t (a INT)") == "1:8: expected 'TABLE', 'VIEW' or 'USER', got identifier 't'");
     CHECK(errorOf("CREATE TABLE t") == "1:15: expected '(', got 'end of input'");
     CHECK(errorOf("CREATE TABLE t ()") == "1:17: expected identifier, got ')'");
     CHECK(errorOf("CREATE TABLE t (a)") == "1:18: expected column type (INT, FLOAT, TEXT or BOOL), got ')'");
@@ -112,7 +112,7 @@ TEST_CASE("CREATE TABLE syntax errors") {
 
 TEST_CASE("DROP TABLE") {
     CHECK(parseAs<DropTable>("DROP TABLE Users;").table == "users");
-    CHECK(errorOf("DROP Users") == "1:6: expected 'TABLE' or 'VIEW', got identifier 'users'");
+    CHECK(errorOf("DROP Users") == "1:6: expected 'TABLE', 'VIEW' or 'USER', got identifier 'users'");
     CHECK(errorOf("DROP TABLE") == "1:11: expected identifier, got 'end of input'");
 }
 
@@ -282,9 +282,9 @@ TEST_CASE("DELETE with and without WHERE") {
 // ---- general structure -----------------------------------------------------
 
 TEST_CASE("unknown statement and trailing garbage") {
-    CHECK(errorOf("") == "1:1: expected statement (CREATE, DROP, INSERT, SELECT, UPDATE, DELETE, BEGIN, COMMIT or ROLLBACK), got 'end of input'");
+    CHECK(errorOf("") == "1:1: expected statement (CREATE, DROP, ALTER, INSERT, SELECT, UPDATE, DELETE, BEGIN, COMMIT or ROLLBACK), got 'end of input'");
     CHECK(errorOf("EXPLAIN SELECT * FROM t") ==
-          "1:1: expected statement (CREATE, DROP, INSERT, SELECT, UPDATE, DELETE, BEGIN, COMMIT or ROLLBACK), got identifier 'explain'");
+          "1:1: expected statement (CREATE, DROP, ALTER, INSERT, SELECT, UPDATE, DELETE, BEGIN, COMMIT or ROLLBACK), got identifier 'explain'");
     CHECK(errorOf("SELECT * FROM t; SELECT * FROM t") == "1:18: expected end of input, got 'SELECT'");
     CHECK(errorOf("SELECT * FROM t;;") == "1:17: expected end of input, got ';'");
 }
