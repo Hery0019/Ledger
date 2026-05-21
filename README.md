@@ -38,6 +38,12 @@ meant for personal use afterwards.
 - Expressions: `+ - * /`, comparisons, `AND OR NOT`, `IS [NOT] NULL`,
   `[NOT] IN (...)`, `[NOT] BETWEEN a AND b`, `[NOT] LIKE 'pattern'` (`%`, `_`),
   SQL three-valued logic. Case-insensitive identifiers.
+- `CREATE USER name PASSWORD 'secret'` / `ALTER USER name PASSWORD 'new'` /
+  `DROP USER name` — user accounts, stored as salted PBKDF2-HMAC-SHA256
+  hashes in `users.txt`. They gate the HTTP server (see below); the CLI needs
+  none, since whoever can read the files needs no password (they are plain
+  text), exactly like the postgres OS user. `USER`, `PASSWORD` and `ALTER`
+  are reserved words.
 - `BEGIN [TRANSACTION]` / `COMMIT` / `ROLLBACK`: writes are applied at once and
   logged; `ROLLBACK` undoes them in reverse order. Atomic within the process,
   not across a crash. `CREATE` / `DROP` are refused inside a transaction; a
@@ -152,8 +158,23 @@ a session: a transaction must begin and end within a single body
 (`BEGIN; ...; COMMIT;`); a transaction left open — or broken by an error —
 is rolled back, exactly like a REPL session closing mid-transaction.
 
-There is no authentication: keep it on localhost, or put something that
-authenticates in front.
+**Authentication.** A database with user accounts requires HTTP Basic
+credentials matching one of them on every request; without any account it is
+open. The bootstrap is one statement, from the REPL or from a first request:
+
+```sh
+$ curl -s -X POST http://127.0.0.1:5433/query -d "CREATE USER alice PASSWORD 'S3cret!';"
+{"results":[{"kind":"ddl"}]}
+$ curl -s -X POST http://127.0.0.1:5433/query -d "SELECT 1;"          # 401 from now on
+{"error":{"code":"Unauthorized","message":"user name and password required (HTTP Basic)"}}
+$ curl -s -u alice:'S3cret!' -X POST http://127.0.0.1:5433/query -d "SELECT 1 AS one;"
+{"results":[{"kind":"select","columns":["one"],"rows":[[1]]}]}
+```
+
+Every account is equal (no roles, no per-table grants in v1); `.users` lists
+them in the REPL. Passwords travel in clear over plain HTTP: keep ledgerd on
+localhost, or put TLS in front. And the storage itself is plain text — the
+accounts protect the network door, not the files.
 
 ## On-disk format
 
