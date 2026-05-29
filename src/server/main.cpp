@@ -7,8 +7,10 @@
 // served one at a time. A transaction must begin and end within a single
 // request (see handler.h).
 //
-// Listens on 127.0.0.1:5433 by default. There is NO authentication: keep it
-// on localhost, or put something that authenticates in front.
+// Authentication: a database with user accounts (CREATE USER name PASSWORD
+// '...') requires HTTP Basic credentials matching one of them on every
+// request; a database without accounts is open. Passwords travel in clear
+// (plain HTTP): keep it on localhost, or put TLS in front.
 //
 // Exit codes: 0 ok (SIGINT/SIGTERM shuts down cleanly), 1 database or bind
 // error, 2 usage error.
@@ -71,13 +73,21 @@ int main(int argc, char** argv) {
 
     httplib::Server server;
     std::mutex mtx;
-    attachRoutes(server, *db.value(), mtx);
+    AuthCache cache;
+    attachRoutes(server, *db.value(), mtx, cache);
     runningServer = &server;
     std::signal(SIGINT, stopServer);
     std::signal(SIGTERM, stopServer);
 
+    const std::size_t accounts = db.value()->catalog().userNames().size();
     std::cerr << "ledgerd: serving " << db.value()->directory().string() << " on http://" << host
               << ':' << port << " (POST /query, GET /health)\n";
+    if (accounts) {
+        std::cerr << "ledgerd: " << accounts << " user account(s), HTTP Basic authentication required\n";
+    } else {
+        std::cerr << "ledgerd: no user accounts - open access"
+                  << " (CREATE USER name PASSWORD '...' to require authentication)\n";
+    }
     if (!server.listen(host, port)) {
         std::cerr << "error [IoError]: cannot listen on " << host << ':' << port << '\n';
         return 1;
