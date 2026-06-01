@@ -37,7 +37,8 @@ TEST_CASE("HTTP round-trip: POST /query and GET /health over a real socket") {
     TempDb t("server_http");
     httplib::Server server;
     std::mutex mtx;
-    attachRoutes(server, *t.db, mtx);
+    AuthCache cache;
+    attachRoutes(server, *t.db, mtx, cache);
     const int port = server.bind_to_any_port("127.0.0.1");
     REQUIRE(port > 0);
     std::thread serving([&server] { server.listen_after_bind(); });
@@ -63,6 +64,32 @@ TEST_CASE("HTTP round-trip: POST /query and GET /health over a real socket") {
         REQUIRE(bad);
         CHECK(bad->status == 400);
         CHECK(contains(bad->body, R"("code":"NotFound")"));
+
+        // CREATE USER closes the database to anonymous requests...
+        const auto lock = client.Post("/query", "CREATE USER alice PASSWORD 'S3cret!';", "text/plain");
+        REQUIRE(lock);
+        CHECK(lock->status == 200);
+        const auto anonymous = client.Post("/query", "SELECT n FROM t;", "text/plain");
+        REQUIRE(anonymous);
+        CHECK(anonymous->status == 401);
+        CHECK(anonymous->get_header_value("WWW-Authenticate") == R"(Basic realm="ledger")");
+        const auto probe = client.Get("/health");
+        REQUIRE(probe);
+        CHECK(probe->status == 401);
+    }
+    {
+        // ...and HTTP Basic credentials open it again (wrong password: 401).
+        httplib::Client wrong("127.0.0.1", port);
+        wrong.set_basic_auth("alice", "nope");
+        REQUIRE(wrong.Get("/health"));
+        CHECK(wrong.Get("/health")->status == 401);
+
+        httplib::Client alice("127.0.0.1", port);
+        alice.set_basic_auth("alice", "S3cret!");
+        const auto ok = alice.Post("/query", "SELECT n FROM t;", "text/plain");
+        REQUIRE(ok);
+        CHECK(ok->status == 200);
+        CHECK(contains(ok->body, R"("rows":[[7]])"));
     }
 
     server.stop();
