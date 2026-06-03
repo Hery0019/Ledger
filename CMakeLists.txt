@@ -20,6 +20,7 @@ add_library(ledger_core
   src/core/password.cpp
   src/core/result.cpp
   src/core/sha256.cpp
+  src/core/uuid.cpp
   src/core/value.cpp
 )
 target_include_directories(ledger_core PUBLIC src)
@@ -126,6 +127,7 @@ add_executable(ledger_tests
   tests/test_server_http.cpp
   tests/test_server_json.cpp
   tests/test_users.cpp
+  tests/test_uuid.cpp
 )
 # third_party (doctest, httplib) comes as a system include via ledger_httplib.
 target_link_libraries(ledger_tests PRIVATE ledger_core ledger_sql ledger_semantic ledger_storage ledger_exec ledger_cli ledger_server ledger_httplib)
