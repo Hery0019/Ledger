@@ -196,6 +196,7 @@ Cell cellOf(const Value& v) {
         case DataType::Float: return {v.toText(), false, true, ansi::yellow};
         case DataType::Bool:  return {v.toText(), false, false, v.asBool() ? ansi::green : ansi::red};
         case DataType::Text:  return {v.toText(), false, false, {}};
+        case DataType::Uuid:  return {v.toText(), false, false, ansi::cyan};
     }
     return {v.toText(), false, false, {}};
 }
