@@ -6,6 +6,7 @@
 #include <variant>
 
 #include "core/result.h"
+#include "core/uuid.h"
 
 namespace ledger {
 
@@ -15,6 +16,7 @@ enum class DataType {
     Float,  // IEEE 754 double, finite (NaN/Inf rejected at construction)
     Text,   // byte string, bytewise comparison (no collation)
     Bool,
+    Uuid,   // 128-bit RFC 4122 UUID, bytewise order (see core/uuid.h)
 };
 
 std::string_view dataTypeName(DataType type) noexcept;
@@ -31,6 +33,7 @@ public:
     static Value integer(std::int64_t v) noexcept { return Value{v}; }
     static Value text(std::string v) noexcept { return Value{std::move(v)}; }
     static Value boolean(bool v) noexcept { return Value{v}; }
+    static Value uuid(Uuid v) noexcept { return Value{v}; }
     // Rejects NaN and ±Inf: they have no coherent SQL semantics and would make
     // a total order impossible.
     static Result<Value> real(double v);
@@ -44,6 +47,7 @@ public:
     [[nodiscard]] double asFloat() const;
     [[nodiscard]] const std::string& asText() const;
     [[nodiscard]] bool asBool() const;
+    [[nodiscard]] const Uuid& asUuid() const;
 
     // Text codec at the type level. Reversible: fromText(t, v.toText()) == v
     // for every non-NULL value. Encoding NULL and escaping separators are the
@@ -69,7 +73,7 @@ public:
     [[nodiscard]] bool operator==(const Value& other) const noexcept { return data_ == other.data_; }
 
 private:
-    using Storage = std::variant<std::monostate, std::int64_t, double, std::string, bool>;
+    using Storage = std::variant<std::monostate, std::int64_t, double, std::string, bool, Uuid>;
     explicit Value(Storage s) noexcept : data_(std::move(s)) {}
 
     Storage data_;
