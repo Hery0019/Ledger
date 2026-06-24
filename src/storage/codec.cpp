@@ -40,6 +40,7 @@ std::optional<DataType> parseType(std::string_view name) {
     if (name == "FLOAT") return DataType::Float;
     if (name == "TEXT") return DataType::Text;
     if (name == "BOOL") return DataType::Bool;
+    if (name == "UUID") return DataType::Uuid;
     return std::nullopt;
 }
 
