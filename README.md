@@ -7,7 +7,11 @@ meant for personal use afterwards.
 
 ## Scope (v1)
 
-- `CREATE TABLE` / `DROP TABLE` — types `INT`, `FLOAT`, `TEXT`, `BOOL`;
+- `CREATE TABLE` / `DROP TABLE` — types `INT`, `FLOAT`, `TEXT`, `BOOL`,
+  `UUID` (RFC 4122, bytewise order; written as a `'xxxxxxxx-xxxx-...'` text
+  literal, converted and validated at bind time; a `UUID PRIMARY KEY` that an
+  INSERT omits — or sets to NULL — receives a fresh random version-4 UUID,
+  the way AUTOINCREMENT serves INT keys);
   column constraints `PRIMARY KEY` (one per table, implies `NOT NULL`),
   `NOT NULL`, `DEFAULT <constant>`, `UNIQUE` (NULLs never collide),
   `CHECK (expr)` (a BOOL expression over the row; only FALSE rejects, NULL passes),
