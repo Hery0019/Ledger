@@ -101,6 +101,12 @@ bool comparable(DataType a, DataType b) noexcept {
            (isNumeric(a) && isNumeric(b));
 }
 
+// Columns whose key the engine generates when an INSERT omits them (or
+// passes NULL): AUTOINCREMENT, and UUID PRIMARY KEY (a fresh version 4).
+bool generatesKey(const ColumnSchema& c) noexcept {
+    return c.autoIncrement || (c.primaryKey && c.type == DataType::Uuid);
+}
+
 // Column scope of an expression: the output columns of a relation. nullptr
 // scope = no column allowed (INSERT ... VALUES).
 struct Scope {
@@ -217,6 +223,14 @@ private:
                                      "column '" + c.name + "': AUTOINCREMENT and DEFAULT are exclusive");
                 }
                 column.autoIncrement = true;
+            }
+            // A UUID PRIMARY KEY generates its own value when omitted, so a
+            // DEFAULT there would never be used: refuse it rather than let it
+            // lie in the schema.
+            if (c.primaryKey && c.type == DataType::Uuid && c.defaultExpr) {
+                return makeError(ErrorCode::SyntaxError,
+                                 "column '" + c.name + "': a UUID PRIMARY KEY generates its value; "
+                                 "DEFAULT is not allowed");
             }
             if (c.defaultExpr) {
                 // A DEFAULT is a constant: bound without any column in scope,
@@ -458,8 +472,8 @@ private:
             const ColumnSchema& col = table->columns[targets[i]];
             // No current row inside VALUES: every column is forbidden there.
             LEDGER_TRY(e, bindExpr(*s.values[i], nullptr));
-            // NULL into an AUTOINCREMENT column asks for the next key.
-            if (col.autoIncrement && e->type == DataType::Null) {
+            // NULL into a generated-key column asks the engine for one.
+            if (generatesKey(col) && e->type == DataType::Null) {
                 autoColumn = targets[i];
                 provided[targets[i]] = true;
                 continue;
@@ -475,7 +489,7 @@ private:
         for (std::size_t i = 0; i < table->columns.size(); ++i) {
             if (provided[i]) continue;
             const ColumnSchema& col = table->columns[i];
-            if (col.autoIncrement) {
+            if (generatesKey(col)) {
                 autoColumn = i;
             } else if (col.defaultValue) {
                 row[i] = *col.defaultValue;
@@ -787,6 +801,21 @@ private:
 
     // Checks that an expression can feed a column; inserts the Int -> Float
     // cast when needed; refuses a guaranteed NULL on a NOT NULL column.
+    // SQL has no UUID literal syntax: a constant TEXT expression meeting a
+    // UUID context is converted here, at bind time (a malformed one is an
+    // error before anything runs). Anything else is left untouched, so the
+    // normal type rules still apply — in particular a non-constant TEXT
+    // never silently becomes a UUID.
+    Result<void> coerceUuidText(BoundExprPtr& e, DataType other, const ast::Expr& src) {
+        if (other != DataType::Uuid || e->type != DataType::Text) return {};
+        const Value* v = std::get_if<Value>(&e->node);
+        if (!v) return {};
+        auto parsed = Value::fromText(DataType::Uuid, v->asText());
+        if (!parsed.ok()) return errorAt(src, ErrorCode::TypeError, parsed.error().message);
+        e = make(std::move(parsed).value(), DataType::Uuid);
+        return {};
+    }
+
     Result<BoundExprPtr> fitToColumn(BoundExprPtr e, const ColumnSchema& col, const ast::Expr& src) {
         if (e->type == DataType::Null) {
             if (col.notNull) {
@@ -795,6 +824,7 @@ private:
             }
             return e;
         }
+        LEDGER_TRY_VOID(coerceUuidText(e, col.type, src));
         if (e->type == col.type) return e;
         if (e->type == DataType::Int && col.type == DataType::Float) {
             if (const Value* v = std::get_if<Value>(&e->node)) {
@@ -869,6 +899,7 @@ private:
                     LEDGER_TRY(value, bindExpr(*n.value, scope, group));
                     LEDGER_TRY(slot, bindSubquery(e, *n.select, 1));
                     const DataType colType = subqueries_->at(slot)->projection[0]->type;
+                    LEDGER_TRY_VOID(coerceUuidText(value, colType, e));
                     if (!comparable(value->type, colType)) {
                         return errorAt(e, ErrorCode::TypeError,
                                        "cannot compare " + typeName(value->type) + " with the subquery's " +
@@ -1050,6 +1081,7 @@ private:
         BoundInList out{std::move(value), {}, in.negated};
         for (const auto& item : in.items) {
             LEDGER_TRY(x, bindExpr(*item, scope, group));
+            LEDGER_TRY_VOID(coerceUuidText(x, out.value->type, *item));
             if (!comparable(out.value->type, x->type)) {
                 return errorAt(*item, ErrorCode::TypeError,
                                "cannot compare " + typeName(out.value->type) + " with " + typeName(x->type) +
@@ -1068,6 +1100,8 @@ private:
         LEDGER_TRY(value, bindExpr(*b.value, scope, group));
         LEDGER_TRY(low, bindExpr(*b.low, scope, group));
         LEDGER_TRY(high, bindExpr(*b.high, scope, group));
+        LEDGER_TRY_VOID(coerceUuidText(low, value->type, *b.low));
+        LEDGER_TRY_VOID(coerceUuidText(high, value->type, *b.high));
         for (const auto* bound : {&low, &high}) {
             if (!comparable(value->type, (*bound)->type)) {
                 return errorAt(e, ErrorCode::TypeError,
@@ -1202,6 +1236,11 @@ private:
                                     GroupContext* group) {
         LEDGER_TRY(lhs, bindExpr(*b.lhs, scope, group));
         LEDGER_TRY(rhs, bindExpr(*b.rhs, scope, group));
+        if (isComparison(b.op)) {
+            // `id = '550e8400-...'`: the text side folds into a UUID.
+            LEDGER_TRY_VOID(coerceUuidText(lhs, rhs->type, *b.lhs));
+            LEDGER_TRY_VOID(coerceUuidText(rhs, lhs->type, *b.rhs));
+        }
         const DataType lt = lhs->type;
         const DataType rt = rhs->type;
         const std::string opName(ast::binaryOpName(b.op));
