@@ -130,7 +130,9 @@ struct BoundInsert {
     const TableSchema* table;
     Row row;  // complete, in schema order, types already conforming
     std::vector<BoundCheck> checks;
-    // AUTOINCREMENT column left to the executor to fill (its row slot is NULL).
+    // Generated-key column left to the executor to fill (its row slot is
+    // NULL): AUTOINCREMENT takes the next INT key, a UUID PRIMARY KEY takes
+    // a fresh version-4 UUID.
     std::optional<std::size_t> autoColumn;
 };
 
