@@ -22,6 +22,10 @@ struct QueryResult {
     std::vector<Row> rows;             // projected rows (SELECT only)
     std::size_t affected = 0;          // INSERT/UPDATE/DELETE: rows touched
     ResultKind kind = ResultKind::Ddl;
+    // INSERT only: the key the engine generated (AUTOINCREMENT, UUID PRIMARY
+    // KEY), so the caller learns it without a second query. Absent when the
+    // statement provided every value itself.
+    std::optional<Value> key;
 };
 
 // Runs a BoundStatement on a storage engine. The only place that modifies the
