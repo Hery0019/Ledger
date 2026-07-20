@@ -54,8 +54,13 @@ std::string toJson(const QueryResult& result) {
     switch (result.kind) {
         case ResultKind::Ddl:
             return R"({"kind":"ddl"})";
-        case ResultKind::Dml:
-            return R"({"kind":"dml","affected":)" + std::to_string(result.affected) + '}';
+        case ResultKind::Dml: {
+            std::string dml = R"({"kind":"dml","affected":)" + std::to_string(result.affected);
+            // The key the engine generated for this INSERT, if any: without
+            // it a client could never learn an auto-generated UUID.
+            if (result.key) dml += R"(,"key":)" + toJson(*result.key);
+            return dml + '}';
+        }
         case ResultKind::Select:
             break;
     }

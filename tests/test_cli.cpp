@@ -206,9 +206,12 @@ TEST_CASE("formatSummary") {
     CHECK(formatSummary(sel) == "1 row");
     sel.rows.push_back(Row{Value::integer(2)});
     CHECK(formatSummary(sel) == "2 rows");
-    CHECK(formatSummary(QueryResult{{}, {}, 1, ResultKind::Dml}) == "1 row affected");
-    CHECK(formatSummary(QueryResult{{}, {}, 0, ResultKind::Dml}) == "0 rows affected");
-    CHECK(formatSummary(QueryResult{{}, {}, 3, ResultKind::Dml}) == "3 rows affected");
+    CHECK(formatSummary(QueryResult{{}, {}, 1, ResultKind::Dml, {}}) == "1 row affected");
+    CHECK(formatSummary(QueryResult{{}, {}, 0, ResultKind::Dml, {}}) == "0 rows affected");
+    CHECK(formatSummary(QueryResult{{}, {}, 3, ResultKind::Dml, {}}) == "3 rows affected");
+    QueryResult withKey{{}, {}, 1, ResultKind::Dml, {}};
+    withKey.key = Value::integer(42);
+    CHECK(formatSummary(withKey) == "1 row affected (key 42)");
     CHECK(formatSummary(QueryResult{}) == "ok");
 }
 
