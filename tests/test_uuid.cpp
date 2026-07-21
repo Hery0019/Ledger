@@ -215,3 +215,29 @@ TEST_CASE("UUID rows and schema survive a database reopen") {
     }
     fs::remove_all(dir);
 }
+
+// ---- generated keys are reported -------------------------------------------------
+
+TEST_CASE("INSERT reports the key it generated (UUID and AUTOINCREMENT alike)") {
+    Fixture f;
+    REQUIRE(f.run("CREATE TABLE u (id UUID PRIMARY KEY, n INT)").ok());
+    const auto gen = f.run("INSERT INTO u (n) VALUES (1)");
+    REQUIRE(gen.ok());
+    REQUIRE(gen.value().key.has_value());
+    CHECK(gen.value().key->type() == DataType::Uuid);
+    // The reported key is the row's actual key.
+    CHECK(f.rows(std::string("SELECT n FROM u WHERE id = '") + gen.value().key->toText() + "'")
+              .rows.size() == 1);
+
+    REQUIRE(f.run("CREATE TABLE a (id INT PRIMARY KEY AUTOINCREMENT, n INT)").ok());
+    const auto next = f.run("INSERT INTO a (n) VALUES (1)");
+    REQUIRE(next.ok());
+    REQUIRE(next.value().key.has_value());
+    CHECK(next.value().key->asInt() == 1);
+
+    // An explicit key is the caller's own: nothing to report.
+    const auto explicitKey = f.run(std::string("INSERT INTO u VALUES ('") + std::string(kA) + "', 2)");
+    REQUIRE(explicitKey.ok());
+    CHECK_FALSE(explicitKey.value().key.has_value());
+    CHECK_FALSE(f.run("UPDATE u SET n = 3").value().key.has_value());
+}
