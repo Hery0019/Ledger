@@ -47,14 +47,18 @@ public:
     // rollback of a DELETE). The rowid must not be live. AlreadyExists otherwise.
     virtual Result<void> restore(std::string_view table, RowId id, const Row& row) = 0;
 
-    // Primary-key index. Every table with a PRIMARY KEY has an in-memory
-    // index on it, maintained by the engine on every write and rebuilt when
-    // the table is loaded. `lookup` answers "which live row has this key"
-    // without a scan; it must only be called for the PK column (Internal
-    // otherwise). NULL never matches.
+    // Column indexes. Every PRIMARY KEY / UNIQUE column has an in-memory
+    // index, maintained by the engine on every write and rebuilt when the
+    // table is loaded; CREATE INDEX adds non-unique ones. `lookup` answers
+    // "which live row has this key" without a scan — first match, which is
+    // the only match on a unique index; `lookupAll` returns every matching
+    // row (rowid order) and is what non-unique indexes are for. Both are
+    // Internal on a column without an index. NULL never matches.
     [[nodiscard]] virtual bool indexed(std::string_view table, std::size_t column) const noexcept = 0;
     virtual Result<std::optional<std::pair<RowId, Row>>> lookup(std::string_view table, std::size_t column,
                                                                 const Value& key) = 0;
+    virtual Result<std::vector<std::pair<RowId, Row>>> lookupAll(std::string_view table, std::size_t column,
+                                                                 const Value& key) = 0;
     // Largest live key of an indexed column (AUTOINCREMENT); nullopt when the
     // table has no row with a value there. Internal on a column without index.
     virtual Result<std::optional<Value>> maxKey(std::string_view table, std::size_t column) = 0;
