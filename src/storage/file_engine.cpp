@@ -404,7 +404,7 @@ Result<void> FileEngine::loadRows(Table& t) {
                 return makeError(ErrorCode::Corruption,
                                  where + "tombstone for unknown row " + std::to_string(r.id));
             }
-            t.indexes.remove(victim->second);
+            t.indexes.remove(r.id, victim->second);
             t.rows.erase(victim);
             ++t.tombstones;
         } else {
@@ -489,7 +489,7 @@ Result<void> FileEngine::remove(std::string_view table, RowId id) {
         return makeError(ErrorCode::NotFound, "row " + std::to_string(id) + " not found");
     }
     LEDGER_TRY_VOID(appendLine(*t, codec::encodeTombstone(id)));
-    t->indexes.remove(it->second);
+    t->indexes.remove(id, it->second);
     t->rows.erase(it);
     ++t->tombstones;
     return maybeCompact(*t);
@@ -527,6 +527,17 @@ Result<std::optional<std::pair<RowId, Row>>> FileEngine::lookup(std::string_view
     const auto id = index->find(key);
     if (!id) return std::optional<std::pair<RowId, Row>>{};
     return std::optional<std::pair<RowId, Row>>{std::pair{*id, t->rows.at(*id)}};
+}
+
+Result<std::vector<std::pair<RowId, Row>>> FileEngine::lookupAll(std::string_view table, std::size_t column,
+                                                                 const Value& key) {
+    const std::lock_guard<std::mutex> lock(mu_);
+    LEDGER_TRY(t, loaded(table));
+    const ColumnIndex* index = t->indexes.on(column);
+    if (!index) return makeError(ErrorCode::Internal, "lookupAll on a column without an index");
+    std::vector<std::pair<RowId, Row>> out;
+    for (const RowId id : index->findAll(key)) out.emplace_back(id, t->rows.at(id));
+    return out;
 }
 
 Result<std::optional<Value>> FileEngine::maxKey(std::string_view table, std::size_t column) {
