@@ -66,7 +66,7 @@ Result<void> MemoryEngine::remove(std::string_view table, RowId id) {
     if (it == t->rows.end()) {
         return makeError(ErrorCode::NotFound, "row " + std::to_string(id) + " not found");
     }
-    t->indexes.remove(it->second);
+    t->indexes.remove(id, it->second);
     t->rows.erase(it);
     return {};
 }
@@ -98,6 +98,16 @@ Result<std::optional<std::pair<RowId, Row>>> MemoryEngine::lookup(std::string_vi
     const auto id = index->find(key);
     if (!id) return std::optional<std::pair<RowId, Row>>{};
     return std::optional<std::pair<RowId, Row>>{std::pair{*id, t->rows.at(*id)}};
+}
+
+Result<std::vector<std::pair<RowId, Row>>> MemoryEngine::lookupAll(std::string_view table, std::size_t column,
+                                                                   const Value& key) {
+    LEDGER_TRY(t, find(table));
+    const ColumnIndex* index = t->indexes.on(column);
+    if (!index) return makeError(ErrorCode::Internal, "lookupAll on a column without an index");
+    std::vector<std::pair<RowId, Row>> out;
+    for (const RowId id : index->findAll(key)) out.emplace_back(id, t->rows.at(id));
+    return out;
 }
 
 Result<std::optional<Value>> MemoryEngine::maxKey(std::string_view table, std::size_t column) {
