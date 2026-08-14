@@ -54,7 +54,10 @@ meant for personal use afterwards.
   session closing mid-transaction rolls it back.
 - Every `PRIMARY KEY` and `UNIQUE` column has an in-memory index (rebuilt when a table is loaded):
   key uniqueness and `WHERE pk = value` on a table are answered without a
-  scan. No user-defined indexes.
+  scan. `CREATE INDEX name ON table (column)` / `DROP INDEX name` add
+  non-unique indexes on other columns (one column per index; only the
+  declaration is persisted, in `indexes.txt`); an equality `WHERE` on any
+  indexed column is answered by its index. `.indexes` lists them.
 - No correlated subqueries.
 
 ![Joins, aggregates, a view and CASE](docs/queries.svg)
