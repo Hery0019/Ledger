@@ -147,6 +147,12 @@ bool dotCommand(const Console& con, Database& db, const std::string& line, bool&
         const auto names = db.catalog().userNames();
         if (names.empty()) std::cout << con.paint(ansi::dim, "no users: the database is open (CREATE USER name PASSWORD '...' to protect it)") << '\n';
         for (const auto name : names) std::cout << name << '\n';
+    } else if (cmd == ".indexes") {
+        const auto indexes = db.catalog().indexes();
+        if (indexes.empty()) std::cout << con.paint(ansi::dim, "no user indexes (CREATE INDEX name ON table (column) to add one)") << '\n';
+        for (const auto& d : indexes) {
+            std::cout << d.name << con.paint(ansi::dim, " on ") << d.table << '(' << d.column << ")\n";
+        }
     } else if (cmd == ".schema") {
         if (arg.empty()) {
             std::cerr << con.paint(ansi::red, "error") << ": usage: .schema <table-or-view>\n";
@@ -191,6 +197,7 @@ bool dotCommand(const Console& con, Database& db, const std::string& line, bool&
         item(".tables", "list tables");
         item(".views", "list views");
         item(".users", "list user accounts (they gate ledgerd)");
+        item(".indexes", "list user indexes");
         item(".schema <name>", "show a table's or a view's definition");
         item(".quit", "exit");
     } else {
