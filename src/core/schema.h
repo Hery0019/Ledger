@@ -71,4 +71,13 @@ struct ViewDef {
     std::string sql;   // the SELECT, verbatim (no trailing `;`)
 };
 
+// A user-declared index (CREATE INDEX): only the declaration is persisted;
+// the index itself lives in memory and is rebuilt when the table's rows are
+// loaded. Index names have their own namespace.
+struct IndexDef {
+    std::string name;    // lowercase
+    std::string table;   // lowercase
+    std::string column;  // lowercase
+};
+
 }  // namespace ledger
