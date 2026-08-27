@@ -152,4 +152,39 @@ std::vector<std::string_view> Catalog::userNames() const {
     return names;
 }
 
+// ---- user indexes --------------------------------------------------------------
+
+const IndexDef* Catalog::findIndex(std::string_view name) const noexcept {
+    for (const auto& d : indexes_) {
+        if (d.name == name) return &d;
+    }
+    return nullptr;
+}
+
+Result<void> Catalog::addIndex(IndexDef def) {
+    if (findIndex(def.name)) {
+        return makeError(ErrorCode::AlreadyExists, "index '" + def.name + "' already exists");
+    }
+    indexes_.push_back(std::move(def));
+    return {};
+}
+
+Result<void> Catalog::removeIndex(std::string_view name) {
+    const auto it = std::find_if(indexes_.begin(), indexes_.end(),
+                                 [&](const IndexDef& d) { return d.name == name; });
+    if (it == indexes_.end()) {
+        return makeError(ErrorCode::NotFound, "unknown index '" + std::string(name) + "'");
+    }
+    indexes_.erase(it);
+    return {};
+}
+
+std::vector<IndexDef> Catalog::indexesOn(std::string_view table) const {
+    std::vector<IndexDef> out;
+    for (const auto& d : indexes_) {
+        if (d.table == table) out.push_back(d);
+    }
+    return out;
+}
+
 }  // namespace ledger
