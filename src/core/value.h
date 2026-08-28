@@ -7,7 +7,7 @@
 
 #include "core/result.h"
 
-namespace sqltxt {
+namespace ledger {
 
 enum class DataType {
     Null,   // type de la valeur NULL seule ; jamais un type de colonne
@@ -75,4 +75,4 @@ private:
     Storage data_;
 };
 
-}  // namespace sqltxt
+}  // namespace ledger

@@ -6,12 +6,12 @@
 #include <cstdio>
 #include <cstdlib>
 
-namespace sqltxt {
+namespace ledger {
 
 namespace {
 
 [[noreturn]] void badAccess(DataType requested, DataType actual) {
-    std::fprintf(stderr, "sqltxt: fatal: Value accessed as %.*s but holds %.*s\n",
+    std::fprintf(stderr, "ledger: fatal: Value accessed as %.*s but holds %.*s\n",
                  static_cast<int>(dataTypeName(requested).size()), dataTypeName(requested).data(),
                  static_cast<int>(dataTypeName(actual).size()), dataTypeName(actual).data());
     std::abort();
@@ -118,12 +118,12 @@ Result<Value> Value::fromText(DataType type, std::string_view text) {
             return makeError(ErrorCode::Internal, "fromText called with DataType::Null");
 
         case DataType::Int: {
-            SQLTXT_TRY(v, parseWhole<std::int64_t>(text, type));
+            LEDGER_TRY(v, parseWhole<std::int64_t>(text, type));
             return Value::integer(v);
         }
 
         case DataType::Float: {
-            SQLTXT_TRY(v, parseWhole<double>(text, type));
+            LEDGER_TRY(v, parseWhole<double>(text, type));
             return Value::real(v);  // filtre NaN/Inf ("nan", "inf" sont acceptés par from_chars)
         }
 
@@ -187,4 +187,4 @@ Result<Ordering> Value::compare(const Value& lhs, const Value& rhs) {
                                                " with " + std::string(dataTypeName(rt)));
 }
 
-}  // namespace sqltxt
+}  // namespace ledger

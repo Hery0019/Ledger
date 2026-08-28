@@ -8,7 +8,7 @@
 #include <utility>
 #include <variant>
 
-namespace sqltxt {
+namespace ledger {
 
 // Catégories d'erreurs attendues. Ce sont des erreurs "métier" que l'appelant
 // est censé gérer, par opposition aux bugs (qui doivent faire échouer bruyamment).
@@ -37,7 +37,7 @@ namespace detail {
     // Accéder à la valeur d'un Result en erreur est un bug de programmation,
     // pas une erreur attendue. On ne lance pas d'exception : on arrête net,
     // avec un message exploitable.
-    std::fprintf(stderr, "sqltxt: fatal: %s", what);
+    std::fprintf(stderr, "ledger: fatal: %s", what);
     if (err) {
         std::fprintf(stderr, " (error: %.*s: %s)",
                      static_cast<int>(errorCodeName(err->code).size()),
@@ -128,26 +128,26 @@ inline Error makeError(ErrorCode code, std::string message) {
     return Error{code, std::move(message)};
 }
 
-}  // namespace sqltxt
+}  // namespace ledger
 
 // Propagation d'erreur à la Rust `?`. Portable (pas d'extension GNU).
 //
-//   SQLTXT_TRY(v, parseInt(s));   // déclare `v` de type T, ou `return` l'erreur
-//   SQLTXT_TRY_VOID(writeFile());  // pour Result<void>
+//   LEDGER_TRY(v, parseInt(s));   // déclare `v` de type T, ou `return` l'erreur
+//   LEDGER_TRY_VOID(writeFile());  // pour Result<void>
 //
 // La fonction englobante doit retourner un Result<U> quelconque.
-#define SQLTXT_CONCAT_IMPL(a, b) a##b
-#define SQLTXT_CONCAT(a, b) SQLTXT_CONCAT_IMPL(a, b)
+#define LEDGER_CONCAT_IMPL(a, b) a##b
+#define LEDGER_CONCAT(a, b) LEDGER_CONCAT_IMPL(a, b)
 
-#define SQLTXT_TRY(name, expr)                                        \
-    auto SQLTXT_CONCAT(name, _result__) = (expr);                     \
-    if (!SQLTXT_CONCAT(name, _result__).ok())                         \
-        return std::move(SQLTXT_CONCAT(name, _result__)).error();     \
-    auto name = std::move(SQLTXT_CONCAT(name, _result__)).value()
+#define LEDGER_TRY(name, expr)                                        \
+    auto LEDGER_CONCAT(name, _result__) = (expr);                     \
+    if (!LEDGER_CONCAT(name, _result__).ok())                         \
+        return std::move(LEDGER_CONCAT(name, _result__)).error();     \
+    auto name = std::move(LEDGER_CONCAT(name, _result__)).value()
 
-#define SQLTXT_TRY_VOID(expr)                                         \
+#define LEDGER_TRY_VOID(expr)                                         \
     do {                                                              \
-        auto SQLTXT_CONCAT(tryv_, __LINE__) = (expr);                 \
-        if (!SQLTXT_CONCAT(tryv_, __LINE__).ok())                     \
-            return std::move(SQLTXT_CONCAT(tryv_, __LINE__)).error(); \
+        auto LEDGER_CONCAT(tryv_, __LINE__) = (expr);                 \
+        if (!LEDGER_CONCAT(tryv_, __LINE__).ok())                     \
+            return std::move(LEDGER_CONCAT(tryv_, __LINE__)).error(); \
     } while (0)

@@ -4,7 +4,7 @@
 
 #include "core/result.h"
 
-using namespace sqltxt;
+using namespace ledger;
 
 namespace {
 
@@ -18,11 +18,11 @@ Result<void> check(bool ok) {
     return {};
 }
 
-// Vérifie que SQLTXT_TRY propage bien l'erreur et déballe bien la valeur.
+// Vérifie que LEDGER_TRY propage bien l'erreur et déballe bien la valeur.
 Result<int> sumPositives(int a, int b) {
-    SQLTXT_TRY(x, parsePositive(a));
-    SQLTXT_TRY(y, parsePositive(b));
-    SQLTXT_TRY_VOID(check(x + y < 1000));
+    LEDGER_TRY(x, parsePositive(a));
+    LEDGER_TRY(y, parsePositive(b));
+    LEDGER_TRY_VOID(check(x + y < 1000));
     return x + y;
 }
 
@@ -60,7 +60,7 @@ TEST_CASE("Result<void>") {
     CHECK(bad.error().code == ErrorCode::IoError);
 }
 
-TEST_CASE("SQLTXT_TRY propagates the first failure") {
+TEST_CASE("LEDGER_TRY propagates the first failure") {
     CHECK(sumPositives(1, 2).value() == 3);
 
     Result<int> e1 = sumPositives(-1, 2);

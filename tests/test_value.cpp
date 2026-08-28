@@ -6,7 +6,7 @@
 
 #include "core/value.h"
 
-using namespace sqltxt;
+using namespace ledger;
 
 namespace {
 Value f(double d) { return Value::real(d).value(); }
