@@ -349,9 +349,12 @@ std::string formatSummary(const QueryResult& result) {
     switch (result.kind) {
         case ResultKind::Select:
             return std::to_string(result.rows.size()) + (result.rows.size() == 1 ? " row" : " rows");
-        case ResultKind::Dml:
-            return std::to_string(result.affected) + (result.affected == 1 ? " row" : " rows") +
-                   " affected";
+        case ResultKind::Dml: {
+            std::string s = std::to_string(result.affected) + (result.affected == 1 ? " row" : " rows") +
+                            " affected";
+            if (result.key) s += " (key " + result.key->toText() + ")";
+            return s;
+        }
         case ResultKind::Ddl:
             return "ok";
     }

@@ -44,6 +44,16 @@ TEST_CASE("toJson(QueryResult) for DDL and DML") {
     dml.kind = ResultKind::Dml;
     dml.affected = 3;
     CHECK(toJson(dml) == R"({"kind":"dml","affected":3})");
+
+    // An INSERT that generated its key reports it.
+    QueryResult withKey;
+    withKey.kind = ResultKind::Dml;
+    withKey.affected = 1;
+    withKey.key = Value::integer(7);
+    CHECK(toJson(withKey) == R"({"kind":"dml","affected":1,"key":7})");
+    withKey.key = Value::fromText(DataType::Uuid, "550e8400-e29b-41d4-a716-446655440000").value();
+    CHECK(toJson(withKey) ==
+          R"({"kind":"dml","affected":1,"key":"550e8400-e29b-41d4-a716-446655440000"})");
 }
 
 TEST_CASE("toJson(QueryResult) for SELECT, NULLs included") {

@@ -342,7 +342,9 @@ Result<QueryResult> Executor::run(const BoundInsert& s) {
     LEDGER_TRY_VOID(checkUnique(*s.table, row, {}));
     LEDGER_TRY(id, engine_.insert(s.table->name, row));
     if (undo_) undo_->push_back(Undo{Undo::Kind::Insert, s.table->name, id, {}});
-    return QueryResult{{}, {}, 1, ResultKind::Dml};
+    QueryResult out{{}, {}, 1, ResultKind::Dml, {}};
+    if (s.autoColumn) out.key = row[*s.autoColumn];
+    return out;
 }
 
 namespace {
@@ -778,7 +780,7 @@ Result<QueryResult> Executor::run(const BoundUpdate& s) {
         if (undo_) undo_->push_back(Undo{Undo::Kind::Update, s.table->name, id, matches[i].second});
         LEDGER_TRY_VOID(engine_.update(s.table->name, id, row));
     }
-    return QueryResult{{}, {}, updated.size(), ResultKind::Dml};
+    return QueryResult{{}, {}, updated.size(), ResultKind::Dml, {}};
 }
 
 Result<void> Executor::cascade(std::vector<Doomed>& doomed, std::size_t from) {
@@ -826,7 +828,7 @@ Result<QueryResult> Executor::run(const BoundDelete& s) {
         if (undo_) undo_->push_back(Undo{Undo::Kind::Delete, it->table->name, it->id, it->row});
         LEDGER_TRY_VOID(engine_.remove(it->table->name, it->id));
     }
-    return QueryResult{{}, {}, matches.size(), ResultKind::Dml};
+    return QueryResult{{}, {}, matches.size(), ResultKind::Dml, {}};
 }
 
 }  // namespace ledger

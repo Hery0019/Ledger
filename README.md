@@ -146,7 +146,9 @@ never touch the files — they POST SQL and read JSON back.
   stopping at the first error. Reply `200`: `{"results": [...]}` with one
   entry per statement — `{"kind":"select","columns":[...],"rows":[[...]]}`,
   `{"kind":"dml","affected":n}` or `{"kind":"ddl"}` — plus `"warnings"` when
-  the engine reported any. On error, `400` (client mistake) or `500`
+  the engine reported any. An INSERT whose key the engine generated
+  (AUTOINCREMENT, UUID PRIMARY KEY) also carries `"key"`, so the client
+  learns it without a second query. On error, `400` (client mistake) or `500`
   (IO/corruption): `{"error":{"code":...,"message":...,"line":...},
   "results":[...]}` where `results` holds the statements already applied.
 - `GET /health` — `{"ok":true,"database":"..."}`.
