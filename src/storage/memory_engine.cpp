@@ -14,7 +14,7 @@ Result<void> MemoryEngine::createTable(const TableSchema& schema) {
     if (tables_.contains(schema.name)) {
         return makeError(ErrorCode::AlreadyExists, "table '" + schema.name + "' already exists");
     }
-    tables_.emplace(schema.name, Table{schema, {}, 1});
+    tables_.emplace(schema.name, Table{schema, {}, 1, PkIndex(schema)});
     return {};
 }
 
@@ -33,6 +33,7 @@ Result<RowId> MemoryEngine::insert(std::string_view table, const Row& row) {
     }
     const RowId id = t->nextId++;
     t->rows.emplace(id, row);
+    t->index.add(id, row);
     return id;
 }
 
@@ -54,15 +55,19 @@ Result<void> MemoryEngine::update(std::string_view table, RowId id, const Row& r
     if (row.size() != t->schema.columns.size()) {
         return makeError(ErrorCode::Internal, "update: wrong number of values");
     }
+    t->index.replace(id, it->second, row);
     it->second = row;
     return {};
 }
 
 Result<void> MemoryEngine::remove(std::string_view table, RowId id) {
     LEDGER_TRY(t, find(table));
-    if (t->rows.erase(id) == 0) {
+    const auto it = t->rows.find(id);
+    if (it == t->rows.end()) {
         return makeError(ErrorCode::NotFound, "row " + std::to_string(id) + " not found");
     }
+    t->index.remove(it->second);
+    t->rows.erase(it);
     return {};
 }
 
@@ -75,8 +80,25 @@ Result<void> MemoryEngine::restore(std::string_view table, RowId id, const Row& 
         return makeError(ErrorCode::Internal, "restore: wrong number of values");
     }
     t->rows.emplace(id, row);
+    t->index.add(id, row);
     if (id >= t->nextId) t->nextId = id + 1;
     return {};
+}
+
+bool MemoryEngine::indexed(std::string_view table, std::size_t column) const noexcept {
+    const auto it = tables_.find(table);
+    return it != tables_.end() && it->second.index.column() == column;
+}
+
+Result<std::optional<std::pair<RowId, Row>>> MemoryEngine::lookup(std::string_view table, std::size_t column,
+                                                                  const Value& key) {
+    LEDGER_TRY(t, find(table));
+    if (t->index.column() != column) {
+        return makeError(ErrorCode::Internal, "lookup on a column without an index");
+    }
+    const auto id = t->index.find(key);
+    if (!id) return std::optional<std::pair<RowId, Row>>{};
+    return std::optional<std::pair<RowId, Row>>{std::pair{*id, t->rows.at(*id)}};
 }
 
 Result<void> MemoryEngine::compact(std::string_view table) {

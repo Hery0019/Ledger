@@ -26,7 +26,7 @@ struct QueryResult {
 
 // Runs a BoundStatement on a storage engine. The only place that modifies the
 // Catalog (after a successful CREATE/DROP on the storage side) and that
-// enforces the PRIMARY KEY constraint (by scan: no index in v1).
+// enforces the PRIMARY KEY constraint (through the engine's PK index).
 //
 // Every predictable error (types, PK, evaluation error on a row) is raised
 // BEFORE the first write, in two passes for UPDATE/DELETE. Only an IoError in
