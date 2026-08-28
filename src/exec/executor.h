@@ -86,6 +86,8 @@ private:
     Result<QueryResult> run(const BoundCreateUser& s);
     Result<QueryResult> run(const BoundAlterUser& s);
     Result<QueryResult> run(const BoundDropUser& s);
+    Result<QueryResult> run(const BoundCreateIndex& s);
+    Result<QueryResult> run(const BoundDropIndex& s);
 
     // One recorded write and how to undo it.
     struct Undo {

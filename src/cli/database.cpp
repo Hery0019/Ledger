@@ -43,6 +43,8 @@ Result<std::unique_ptr<Database>> Database::open(const std::filesystem::path& di
     }
     LEDGER_TRY(users, db->engine_->loadUsers());
     for (auto& u : users) LEDGER_TRY_VOID(db->catalog_.addUser(std::move(u)));
+    LEDGER_TRY(indexes, db->engine_->loadIndexes());
+    for (auto& i : indexes) LEDGER_TRY_VOID(db->catalog_.addIndex(std::move(i)));
     return db;
 }
 

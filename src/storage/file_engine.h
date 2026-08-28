@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <map>
+#include <set>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -60,6 +61,10 @@ public:
     Result<std::vector<ViewDef>> loadViews() override;
     Result<void> saveUsers(const std::vector<UserDef>& users) override;
     Result<std::vector<UserDef>> loadUsers() override;
+    Result<void> createIndex(std::string_view table, std::size_t column) override;
+    Result<void> dropIndex(std::string_view table, std::size_t column) override;
+    Result<void> saveIndexes(const std::vector<IndexDef>& indexes) override;
+    Result<std::vector<IndexDef>> loadIndexes() override;
 
     // Accumulated warnings (dropped truncated lines...). Cleared on call.
     std::vector<std::string> takeWarnings();
@@ -93,6 +98,10 @@ private:
 
     std::filesystem::path dir_;
     std::map<std::string, Table, std::less<>> tables_;  // every known table (schema loaded)
+    // User-declared index columns per table (filled by loadIndexes and kept
+    // by createIndex/dropIndex): loadRows rebuilds these along with the
+    // schema-born ones whenever a table's rows are (re)loaded.
+    std::map<std::string, std::set<std::size_t>, std::less<>> userIndexes_;
     std::vector<std::string> warnings_;
     std::mutex mu_;
 };

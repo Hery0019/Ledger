@@ -128,6 +128,14 @@ Result<QueryResult> Executor::run(const BoundDropTable& s) {
         return makeError(ErrorCode::Internal,
                          "catalog out of sync after DROP TABLE: " + removed.error().message);
     }
+    // The table's indexes go with it (the engine already forgot them). A
+    // failed list rewrite is survivable: loadIndexes skips declarations
+    // whose table is gone, with a warning.
+    const auto dropped = catalog_.indexesOn(s.table);
+    if (!dropped.empty()) {
+        for (const auto& d : dropped) (void)catalog_.removeIndex(d.name);
+        LEDGER_TRY_VOID(engine_.saveIndexes(catalog_.indexes()));
+    }
     return QueryResult{};
 }
 
@@ -185,6 +193,44 @@ Result<QueryResult> Executor::run(const BoundAlterUser& s) {
     auto saved = engine_.saveUsers(catalog_.users());
     if (!saved.ok()) {
         (void)catalog_.replaceUser(backup);
+        return saved.error();
+    }
+    return QueryResult{};
+}
+
+// ---- user indexes ------------------------------------------------------------
+//
+// Same shape as views and users: the catalog first, the engine next, the
+// declaration list saved last, everything unwound on failure.
+
+Result<QueryResult> Executor::run(const BoundCreateIndex& s) {
+    LEDGER_TRY_VOID(noDdlInTransaction());
+    LEDGER_TRY_VOID(catalog_.addIndex(s.def));
+    auto built = engine_.createIndex(s.def.table, s.column);
+    if (!built.ok()) {
+        (void)catalog_.removeIndex(s.def.name);
+        return built.error();
+    }
+    auto saved = engine_.saveIndexes(catalog_.indexes());
+    if (!saved.ok()) {
+        (void)engine_.dropIndex(s.def.table, s.column);
+        (void)catalog_.removeIndex(s.def.name);
+        return saved.error();
+    }
+    return QueryResult{};
+}
+
+Result<QueryResult> Executor::run(const BoundDropIndex& s) {
+    LEDGER_TRY_VOID(noDdlInTransaction());
+    const IndexDef* def = catalog_.findIndex(s.name);
+    if (!def) return makeError(ErrorCode::NotFound, "unknown index '" + s.name + "'");
+    const IndexDef backup = *def;
+    LEDGER_TRY_VOID(catalog_.removeIndex(s.name));
+    LEDGER_TRY_VOID(engine_.dropIndex(s.table, s.column));
+    auto saved = engine_.saveIndexes(catalog_.indexes());
+    if (!saved.ok()) {
+        (void)engine_.createIndex(s.table, s.column);
+        (void)catalog_.addIndex(backup);
         return saved.error();
     }
     return QueryResult{};

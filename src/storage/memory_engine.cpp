@@ -142,4 +142,34 @@ Result<void> MemoryEngine::saveUsers(const std::vector<UserDef>& users) {
 
 Result<std::vector<UserDef>> MemoryEngine::loadUsers() { return users_; }
 
+Result<void> MemoryEngine::createIndex(std::string_view table, std::size_t column) {
+    LEDGER_TRY(t, find(table));
+    if (column >= t->schema.columns.size()) {
+        return makeError(ErrorCode::Internal, "createIndex: no such column");
+    }
+    ColumnIndex* index = t->indexes.addIndex(column);
+    if (!index) {
+        return makeError(ErrorCode::AlreadyExists,
+                         "column '" + t->schema.columns[column].name + "' is already indexed");
+    }
+    for (const auto& [id, row] : t->rows) index->add(id, row);
+    return {};
+}
+
+Result<void> MemoryEngine::dropIndex(std::string_view table, std::size_t column) {
+    LEDGER_TRY(t, find(table));
+    if (!t->indexes.removeIndex(column)) {
+        return makeError(ErrorCode::NotFound,
+                         "no user index on column '" + t->schema.columns[column].name + "'");
+    }
+    return {};
+}
+
+Result<void> MemoryEngine::saveIndexes(const std::vector<IndexDef>& indexes) {
+    indexDefs_ = indexes;
+    return {};
+}
+
+Result<std::vector<IndexDef>> MemoryEngine::loadIndexes() { return indexDefs_; }
+
 }  // namespace ledger

@@ -32,6 +32,8 @@ constexpr std::string_view kViewsFile = "views.txt";
 constexpr std::string_view kViewsHeader = "ledger-views 1";
 constexpr std::string_view kUsersFile = "users.txt";
 constexpr std::string_view kUsersHeader = "ledger-users 1";
+constexpr std::string_view kIndexesFile = "indexes.txt";
+constexpr std::string_view kIndexesHeader = "ledger-indexes 1";
 
 Error ioError(const std::string& what, const fs::path& path) {
     return makeError(ErrorCode::IoError, what + ": " + path.string() + " (" + std::strerror(errno) + ")");
@@ -188,6 +190,7 @@ Result<void> FileEngine::dropTable(std::string_view table) {
     fs::remove_all(tableDir(table), ec);
     if (ec) return ioError("cannot remove table directory", tableDir(table), ec);
     tables_.erase(it);
+    userIndexes_.erase(std::string(table));
     return {};
 }
 
@@ -334,6 +337,120 @@ Result<std::vector<UserDef>> FileEngine::loadUsers() {
     return out;
 }
 
+// ---- user indexes ----------------------------------------------------------
+//
+// indexes.txt: `ledger-indexes 1` then <name>\t<table>\t<column> per line.
+// Only the declarations are stored; the entries are rebuilt by loadRows.
+
+Result<void> FileEngine::createIndex(std::string_view table, std::size_t column) {
+    const std::lock_guard<std::mutex> lock(mu_);
+    LEDGER_TRY(t, loaded(table));  // the rows must be live to fill the index
+    if (column >= t->schema.columns.size()) {
+        return makeError(ErrorCode::Internal, "createIndex: no such column");
+    }
+    ColumnIndex* index = t->indexes.addIndex(column);
+    if (!index) {
+        return makeError(ErrorCode::AlreadyExists,
+                         "column '" + t->schema.columns[column].name + "' is already indexed");
+    }
+    for (const auto& [id, row] : t->rows) index->add(id, row);
+    userIndexes_[t->schema.name].insert(column);
+    return {};
+}
+
+Result<void> FileEngine::dropIndex(std::string_view table, std::size_t column) {
+    const std::lock_guard<std::mutex> lock(mu_);
+    const auto it = tables_.find(table);
+    if (it == tables_.end()) return notFound(table);
+    const auto ui = userIndexes_.find(table);
+    if (ui != userIndexes_.end()) {
+        ui->second.erase(column);
+        if (ui->second.empty()) userIndexes_.erase(ui);
+    }
+    // Present in memory only if the table was loaded (or the index created)
+    // in this session; the declaration removal above is what matters.
+    (void)it->second.indexes.removeIndex(column);
+    return {};
+}
+
+Result<void> FileEngine::saveIndexes(const std::vector<IndexDef>& indexes) {
+    const std::lock_guard<std::mutex> lock(mu_);
+    std::string content(kIndexesHeader);
+    content += '\n';
+    for (const auto& d : indexes) {
+        content += d.name;
+        content += '\t';
+        content += d.table;
+        content += '\t';
+        content += d.column;
+        content += '\n';
+    }
+    // Written whole through a temporary file: a crash never leaves a
+    // half-written list.
+    const fs::path path = dir_ / kIndexesFile;
+    const fs::path tmp = dir_ / "indexes.txt.tmp";
+    LEDGER_TRY_VOID(writeWholeFile(tmp, content));
+    std::error_code ec;
+    fs::rename(tmp, path, ec);
+    if (ec) return ioError("cannot replace indexes file", path, ec);
+    return {};
+}
+
+Result<std::vector<IndexDef>> FileEngine::loadIndexes() {
+    const std::lock_guard<std::mutex> lock(mu_);
+    const fs::path path = dir_ / kIndexesFile;
+    std::vector<IndexDef> out;
+    std::error_code ec;
+    if (!fs::exists(path, ec)) return out;  // no user index yet
+    LEDGER_TRY(content, readWholeFile(path));
+
+    std::string_view rest = content;
+    std::size_t lineNo = 0;
+    bool headerSeen = false;
+    while (!rest.empty()) {
+        const std::size_t nl = rest.find('\n');
+        const std::string_view line = rest.substr(0, nl);
+        rest = nl == std::string_view::npos ? std::string_view{} : rest.substr(nl + 1);
+        ++lineNo;
+        const std::string where = path.string() + ":" + std::to_string(lineNo) + ": ";
+        if (!headerSeen) {
+            if (line != kIndexesHeader) {
+                return makeError(ErrorCode::Corruption, where + "missing or unknown header (expected '" +
+                                                            std::string(kIndexesHeader) + "')");
+            }
+            headerSeen = true;
+            continue;
+        }
+        if (line.empty()) continue;
+        const std::size_t tab1 = line.find('\t');
+        const std::size_t tab2 = tab1 == std::string_view::npos ? tab1 : line.find('\t', tab1 + 1);
+        if (tab1 == std::string_view::npos || tab2 == std::string_view::npos || tab1 == 0 ||
+            tab2 == tab1 + 1 || tab2 + 1 >= line.size()) {
+            return makeError(ErrorCode::Corruption, where + "malformed index line");
+        }
+        IndexDef def{std::string(line.substr(0, tab1)), std::string(line.substr(tab1 + 1, tab2 - tab1 - 1)),
+                     std::string(line.substr(tab2 + 1))};
+        // A declaration pointing nowhere (its table was dropped and the list
+        // could not be rewritten) is dropped with a warning, not an error:
+        // the next save rewrites a clean list.
+        const auto t = tables_.find(def.table);
+        const auto column = t == tables_.end() ? std::nullopt : t->second.schema.columnIndex(def.column);
+        if (!column) {
+            warnings_.push_back(where + "index '" + def.name + "' on unknown " + def.table + "(" +
+                                def.column + "), ignored");
+            continue;
+        }
+        userIndexes_[def.table].insert(*column);
+        if (ColumnIndex* index = t->second.indexes.addIndex(*column)) {
+            // Normally declared before the rows are loaded (loadRows fills
+            // it); if they already are, fill it now.
+            for (const auto& [id, row] : t->second.rows) index->add(id, row);
+        }
+        out.push_back(std::move(def));
+    }
+    return out;
+}
+
 // ---- row loading -----------------------------------------------------------
 
 Result<FileEngine::Table*> FileEngine::loaded(std::string_view table) {
@@ -358,6 +475,11 @@ Result<void> FileEngine::loadRows(Table& t) {
 
     t.rows.clear();
     t.indexes = TableIndexes(t.schema);
+    // User-declared indexes are rebuilt along with the schema-born ones: the
+    // replay below feeds every index through t.indexes.add.
+    if (const auto ui = userIndexes_.find(t.schema.name); ui != userIndexes_.end()) {
+        for (const std::size_t column : ui->second) (void)t.indexes.addIndex(column);
+    }
     t.nextId = 1;
     t.tombstones = 0;
 

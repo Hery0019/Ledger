@@ -32,6 +32,10 @@ public:
     Result<std::vector<ViewDef>> loadViews() override;
     Result<void> saveUsers(const std::vector<UserDef>& users) override;
     Result<std::vector<UserDef>> loadUsers() override;
+    Result<void> createIndex(std::string_view table, std::size_t column) override;
+    Result<void> dropIndex(std::string_view table, std::size_t column) override;
+    Result<void> saveIndexes(const std::vector<IndexDef>& indexes) override;
+    Result<std::vector<IndexDef>> loadIndexes() override;
 
 private:
     struct Table {
@@ -45,6 +49,7 @@ private:
     std::map<std::string, Table, std::less<>> tables_;
     std::vector<ViewDef> views_;
     std::vector<UserDef> users_;
+    std::vector<IndexDef> indexDefs_;
 };
 
 }  // namespace ledger

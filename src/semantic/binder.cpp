@@ -420,6 +420,50 @@ private:
         return BoundStatement{BoundDropUser{s.name}};
     }
 
+    // An index needs a real table (views have no rows to index), an existing
+    // column that is not indexed yet, and a free name.
+    Result<BoundStatement> bindStatement(const ast::CreateIndex& s) {
+        if (catalog_.findIndex(s.name)) {
+            return makeError(ErrorCode::AlreadyExists, "index '" + s.name + "' already exists");
+        }
+        if (catalog_.findView(s.table)) {
+            return makeError(ErrorCode::SyntaxError, "cannot index view '" + s.table + "'");
+        }
+        const TableSchema* table = catalog_.find(s.table);
+        if (!table) return makeError(ErrorCode::NotFound, "unknown table '" + s.table + "'");
+        const auto column = table->columnIndex(s.column);
+        if (!column) {
+            return makeError(ErrorCode::NotFound,
+                             "table '" + s.table + "' has no column '" + s.column + "'");
+        }
+        const ColumnSchema& c = table->columns[*column];
+        if (c.primaryKey || c.unique) {
+            return makeError(ErrorCode::AlreadyExists,
+                             "column '" + s.column + "' is already indexed (" +
+                                 (c.primaryKey ? "PRIMARY KEY" : "UNIQUE") + ")");
+        }
+        for (const auto& d : catalog_.indexes()) {
+            if (d.table == s.table && d.column == s.column) {
+                return makeError(ErrorCode::AlreadyExists,
+                                 "column '" + s.column + "' is already indexed by '" + d.name + "'");
+            }
+        }
+        return BoundStatement{BoundCreateIndex{IndexDef{s.name, s.table, s.column}, *column}};
+    }
+
+    Result<BoundStatement> bindStatement(const ast::DropIndex& s) {
+        const IndexDef* def = catalog_.findIndex(s.name);
+        if (!def) return makeError(ErrorCode::NotFound, "unknown index '" + s.name + "'");
+        // The table and column are catalog invariants while the index exists.
+        const TableSchema* table = catalog_.find(def->table);
+        const auto column = table ? table->columnIndex(def->column) : std::nullopt;
+        if (!column) {
+            return makeError(ErrorCode::Internal, "index '" + s.name + "' references missing " +
+                                                      def->table + "(" + def->column + ")");
+        }
+        return BoundStatement{BoundDropIndex{def->name, def->table, *column}};
+    }
+
     Result<void> checkNoDependents(const std::string& name, const char* what) const {
         const auto deps = catalog_.dependents(name);
         if (deps.empty()) return {};

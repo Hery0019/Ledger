@@ -291,9 +291,23 @@ struct BoundDropUser {
     std::string name;
 };
 
+// Index statements: the table and column are resolved (and `column` is the
+// position the engine indexes); the executor only applies them.
+struct BoundCreateIndex {
+    IndexDef def;
+    std::size_t column;
+};
+
+struct BoundDropIndex {
+    std::string name;
+    std::string table;
+    std::size_t column;
+};
+
 using BoundStatement = std::variant<BoundCreateTable, BoundDropTable, BoundCreateView,
                                     BoundDropView, BoundInsert, BoundSelect, BoundUpdate,
                                     BoundDelete, BoundBegin, BoundCommit, BoundRollback,
-                                    BoundCreateUser, BoundAlterUser, BoundDropUser>;
+                                    BoundCreateUser, BoundAlterUser, BoundDropUser,
+                                    BoundCreateIndex, BoundDropIndex>;
 
 }  // namespace ledger
