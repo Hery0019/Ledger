@@ -67,6 +67,21 @@ add_library(ledger_server
 )
 target_link_libraries(ledger_server PUBLIC ledger_cli)
 
+# cpp-httplib (used through src/server/http.h): a system include so the
+# project's -Werror does not apply to the vendored header; sockets need
+# threads everywhere and winsock on Windows.
+find_package(Threads REQUIRED)
+add_library(ledger_httplib INTERFACE)
+target_include_directories(ledger_httplib SYSTEM INTERFACE third_party)
+target_link_libraries(ledger_httplib INTERFACE Threads::Threads $<$<PLATFORM_ID:Windows>:ws2_32>)
+
+add_executable(ledgerd src/server/main.cpp)
+target_link_libraries(ledgerd PRIVATE ledger_server ledger_httplib)
+target_link_options(ledgerd PRIVATE
+  $<$<CXX_COMPILER_ID:GNU,Clang>:-static-libstdc++ -static-libgcc>
+  $<$<AND:$<CXX_COMPILER_ID:GNU>,$<PLATFORM_ID:Windows>>:-static>
+)
+
 add_executable(ledger src/cli/main.cpp)
 target_link_libraries(ledger PRIVATE ledger_cli)
 # C++ runtime linked statically: the executable must run outside the
@@ -103,8 +118,9 @@ add_executable(ledger_tests
   tests/test_index.cpp
   tests/test_constraints.cpp
   tests/test_server_handler.cpp
+  tests/test_server_http.cpp
   tests/test_server_json.cpp
 )
-target_include_directories(ledger_tests PRIVATE third_party)
-target_link_libraries(ledger_tests PRIVATE ledger_core ledger_sql ledger_semantic ledger_storage ledger_exec ledger_cli ledger_server)
+# third_party (doctest, httplib) comes as a system include via ledger_httplib.
+target_link_libraries(ledger_tests PRIVATE ledger_core ledger_sql ledger_semantic ledger_storage ledger_exec ledger_cli ledger_server ledger_httplib)
 add_test(NAME ledger_tests COMMAND ledger_tests)

@@ -84,28 +84,6 @@ Console detectConsole() {
     return c;
 }
 
-// Where bare database names live: the parent of the directory holding the
-// executable when that directory is a build directory (`build/`, `build-san/`
-// ...), otherwise the executable's own directory. Falls back to the current
-// directory if the executable path cannot be determined.
-std::filesystem::path projectRoot() {
-    std::filesystem::path exe;
-#ifdef _WIN32
-    wchar_t buf[MAX_PATH];
-    const DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
-    if (n == 0 || n >= MAX_PATH) return ".";
-    exe = std::filesystem::path(buf);
-#else
-    std::error_code ec;
-    exe = std::filesystem::read_symlink("/proc/self/exe", ec);
-    if (ec) return ".";
-#endif
-    const std::filesystem::path dir = exe.parent_path();
-    const std::string name = dir.filename().string();
-    if (name.rfind("build", 0) == 0) return dir.parent_path();
-    return dir;
-}
-
 // Prints an error. `line` is the statement's starting line in the script
 // (0 = unknown). A positioned message `L:C: ...` (relative to the statement)
 // is rewritten as an absolute position in the script.
