@@ -84,7 +84,7 @@ TEST_CASE("formatTable aligns columns and prints NULL") {
           "+----+-------+\n"
           "| id | name  |\n"
           "+----+-------+\n"
-          "| 1  | alice |\n"
+          "|  1 | alice |\n"
           "| 22 | NULL  |\n"
           "+----+-------+\n");
 }
@@ -101,6 +101,64 @@ TEST_CASE("formatTable counts UTF-8 code points, not bytes") {
           "| caf\xC3\xA9 |\n"
           "| abcd |\n"
           "+------+\n");
+}
+
+TEST_CASE("formatTable right-aligns numbers in every style") {
+    QueryResult r;
+    r.kind = ResultKind::Select;
+    r.columns = {"n", "x"};
+    r.rows = {Row{Value::integer(7), Value::real(12.5).value()},
+              Row{Value::integer(1234), Value::null()}};
+    // A NULL in a numeric column follows the column's alignment.
+    CHECK(formatTable(r) ==
+          "+------+------+\n"
+          "| n    | x    |\n"
+          "+------+------+\n"
+          "|    7 | 12.5 |\n"
+          "| 1234 | NULL |\n"
+          "+------+------+\n");
+    // A column holding only NULLs, or mixed text, stays left-aligned.
+    r.rows = {Row{Value::null(), Value::text("ab")}, Row{Value::integer(5), Value::text("c")}};
+    CHECK(formatTable(r) ==
+          "+------+----+\n"
+          "| n    | x  |\n"
+          "+------+----+\n"
+          "| NULL | ab |\n"
+          "|    5 | c  |\n"
+          "+------+----+\n");
+}
+
+TEST_CASE("formatTable fancy: Unicode borders, coloured cells, widths unaffected by escapes") {
+    QueryResult r;
+    r.kind = ResultKind::Select;
+    r.columns = {"id", "ok"};
+    r.rows = {Row{Value::integer(1), Value::boolean(true)}, Row{Value::null(), Value::boolean(false)}};
+
+    const TableStyle unicodeOnly{true, false};
+    CHECK(formatTable(r, unicodeOnly) ==
+          "╭──────┬───────╮\n"
+          "│ id   │ ok    │\n"
+          "├──────┼───────┤\n"
+          "│    1 │ true  │\n"
+          "│ NULL │ false │\n"
+          "╰──────┴───────╯\n");
+
+    const std::string fancy = formatTable(r, TableStyle::fancy());
+    const std::string R(ansi::reset), G(ansi::gray);
+    // Header is bold cyan, numbers yellow, NULL dim, booleans green/red;
+    // the padding is computed on the raw text, not on the escapes.
+    CHECK(fancy.find(G + "╭──────┬───────╮" + R + "\n") == 0);
+    CHECK(fancy.find(std::string(ansi::bold) + std::string(ansi::cyan) + "id" + R + "   ") != std::string::npos);
+    CHECK(fancy.find("    " + std::string(ansi::yellow) + "1" + R + " ") != std::string::npos);
+    CHECK(fancy.find(std::string(ansi::dim) + "NULL" + R) != std::string::npos);
+    CHECK(fancy.find(std::string(ansi::green) + "true" + R + "  ") != std::string::npos);
+    CHECK(fancy.find(std::string(ansi::red) + "false" + R + " ") != std::string::npos);
+    // Text cells keep the default colour.
+    QueryResult txt;
+    txt.kind = ResultKind::Select;
+    txt.columns = {"s"};
+    txt.rows = {Row{Value::text("abc")}};
+    CHECK(formatTable(txt, TableStyle::fancy()).find(G + "│" + R + " abc " + G + "│" + R) != std::string::npos);
 }
 
 TEST_CASE("formatTable with no rows still prints the header") {

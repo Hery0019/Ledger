@@ -139,8 +139,6 @@ bool endsWithCompleteStatement(std::string_view text) {
 
 namespace {
 
-std::string cell(const Value& v) { return v.isNull() ? "NULL" : v.toText(); }
-
 // Display width in UTF-8 code points, not bytes: "café" does not misalign.
 std::size_t displayWidth(std::string_view s) noexcept {
     std::size_t n = 0;
@@ -148,46 +146,127 @@ std::size_t displayWidth(std::string_view s) noexcept {
     return n;
 }
 
+// A cell ready to draw: its text, whether it is a number and which colour to
+// use. Alignment is decided per column (see formatTable), so that a NULL in
+// a numeric column lines up with the numbers around it.
+struct Cell {
+    std::string text;
+    bool isNull;
+    bool numeric;
+    std::string_view color;  // empty = default colour
+};
+
+Cell cellOf(const Value& v) {
+    switch (v.type()) {
+        case DataType::Null:  return {"NULL", true, false, ansi::dim};
+        case DataType::Int:
+        case DataType::Float: return {v.toText(), false, true, ansi::yellow};
+        case DataType::Bool:  return {v.toText(), false, false, v.asBool() ? ansi::green : ansi::red};
+        case DataType::Text:  return {v.toText(), false, false, {}};
+    }
+    return {v.toText(), false, false, {}};
+}
+
+// The characters a border is drawn with.
+struct BoxChars {
+    std::string_view h, v;                 // horizontal, vertical
+    std::string_view tl, tm, tr;           // top row: left corner, joint, right corner
+    std::string_view ml, mm, mr;           // header separator
+    std::string_view bl, bm, br;           // bottom row
+};
+
+constexpr BoxChars kAsciiBox{"-", "|", "+", "+", "+", "+", "+", "+", "+", "+", "+"};
+constexpr BoxChars kUnicodeBox{"─", "│", "╭", "┬", "╮", "├", "┼", "┤", "╰", "┴", "╯"};
+
+std::string repeat(std::string_view s, std::size_t n) {
+    std::string out;
+    out.reserve(s.size() * n);
+    for (std::size_t i = 0; i < n; ++i) out += s;
+    return out;
+}
+
 }  // namespace
 
-std::string formatTable(const QueryResult& result) {
+std::string formatTable(const QueryResult& result, TableStyle style) {
     if (result.columns.empty()) return {};
     const std::size_t ncols = result.columns.size();
+    const BoxChars& box = style.unicode ? kUnicodeBox : kAsciiBox;
 
-    std::vector<std::vector<std::string>> cells;
+    // Colour helpers: no-ops in plain style, so widths never include escapes.
+    auto paint = [&](std::string_view code, std::string_view text) {
+        std::string s;
+        if (style.color && !code.empty()) s += code;
+        s += text;
+        if (style.color && !code.empty()) s += ansi::reset;
+        return s;
+    };
+    auto border = [&](std::string_view text) { return paint(ansi::gray, text); };
+
+    std::vector<std::vector<Cell>> cells;
     cells.reserve(result.rows.size());
     for (const auto& row : result.rows) {
-        std::vector<std::string> line;
+        std::vector<Cell> line;
         line.reserve(ncols);
-        for (const auto& v : row) line.push_back(cell(v));
+        for (const auto& v : row) line.push_back(cellOf(v));
         cells.push_back(std::move(line));
     }
 
+    // Column widths, and which columns are numeric (every non-NULL value is a
+    // number): those are right-aligned, NULLs included.
     std::vector<std::size_t> width(ncols);
-    for (std::size_t c = 0; c < ncols; ++c) width[c] = displayWidth(result.columns[c]);
-    for (const auto& line : cells) {
-        for (std::size_t c = 0; c < ncols; ++c) width[c] = std::max(width[c], displayWidth(line[c]));
+    std::vector<bool> rightAlign(ncols, false);
+    for (std::size_t c = 0; c < ncols; ++c) {
+        width[c] = displayWidth(result.columns[c]);
+        bool sawNumber = false, sawOther = false;
+        for (const auto& line : cells) {
+            width[c] = std::max(width[c], displayWidth(line[c].text));
+            if (line[c].numeric) sawNumber = true;
+            else if (!line[c].isNull) sawOther = true;
+        }
+        rightAlign[c] = sawNumber && !sawOther;
     }
 
-    auto separator = [&] {
-        std::string s = "+";
-        for (std::size_t c = 0; c < ncols; ++c) s += std::string(width[c] + 2, '-') + "+";
-        return s + "\n";
-    };
-    auto formatLine = [&](const std::vector<std::string>& line) {
-        std::string s = "|";
+    auto rule = [&](std::string_view left, std::string_view joint, std::string_view right) {
+        std::string s(left);
         for (std::size_t c = 0; c < ncols; ++c) {
-            s += ' ';
-            s += line[c];
-            s += std::string(width[c] - displayWidth(line[c]) + 1, ' ');
-            s += '|';
+            s += repeat(box.h, width[c] + 2);
+            s += c + 1 < ncols ? joint : right;
         }
-        return s + "\n";
+        return border(s) + "\n";
     };
 
-    std::string out = separator() + formatLine(result.columns) + separator();
-    for (const auto& line : cells) out += formatLine(line);
-    out += separator();
+    auto drawCell = [&](const Cell& cell, std::size_t w, bool right) {
+        const std::string pad(w - displayWidth(cell.text), ' ');
+        std::string s = " ";
+        if (right) s += pad;
+        s += paint(cell.color, cell.text);
+        if (!right) s += pad;
+        return s + " ";
+    };
+
+    std::string out = rule(box.tl, box.tm, box.tr);
+
+    // Header: bold, coloured, always left-aligned.
+    out += border(box.v);
+    for (std::size_t c = 0; c < ncols; ++c) {
+        const std::string pad(width[c] - displayWidth(result.columns[c]), ' ');
+        out += " ";
+        if (style.color) out += std::string(ansi::bold) + std::string(ansi::cyan);
+        out += result.columns[c];
+        if (style.color) out += ansi::reset;
+        out += pad + " " + border(box.v);
+    }
+    out += "\n";
+    out += rule(box.ml, box.mm, box.mr);
+
+    for (const auto& line : cells) {
+        out += border(box.v);
+        for (std::size_t c = 0; c < ncols; ++c) {
+            out += drawCell(line[c], width[c], rightAlign[c]) + border(box.v);
+        }
+        out += "\n";
+    }
+    out += rule(box.bl, box.bm, box.br);
     return out;
 }
 

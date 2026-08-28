@@ -64,6 +64,23 @@ ledger> SELECT * FROM users WHERE score > 1 ORDER BY name;
 1 row
 ```
 
+In a terminal, results are drawn with rounded Unicode borders and colours
+(bold headers, right-aligned numbers, dim `NULL`, green/red booleans):
+
+```
+╭────┬───────┬───────╮
+│ id │ name  │ score │
+├────┼───────┼───────┤
+│  1 │ Alice │   3.5 │
+│  2 │ Bob   │  NULL │
+╰────┴───────┴───────╯
+2 rows
+```
+
+When stdout is a pipe or a file the output is plain ASCII without escape
+sequences (the `+---+` tables shown above). `NO_COLOR=1` forces plain output;
+`LEDGER_STYLE=fancy` or `LEDGER_STYLE=plain` forces one style either way.
+
 Exit codes: `0` ok, `1` SQL or database error, `2` usage error.
 
 ## On-disk format
