@@ -19,6 +19,9 @@ struct ColumnSchema {
     // already converted to the column type). Absent = NULL.
     std::optional<Value> defaultValue;
     bool unique = false;  // UNIQUE: no two live rows share a non-NULL value
+    // CHECK: a BOOL expression over the table's columns that every row must
+    // not make FALSE (NULL passes). Kept as SQL text; empty = no constraint.
+    std::string check;
 
     // A constructor rather than aggregate initialization, so that adding a
     // constraint field never touches the many `ColumnSchema{...}` call sites.

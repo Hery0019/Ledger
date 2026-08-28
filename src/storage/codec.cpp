@@ -146,6 +146,7 @@ std::string encodeSchema(const TableSchema& schema) {
         if (c.primaryKey) out += " PK";
         else if (c.notNull) out += " NN";
         if (c.unique) out += " UQ";
+        if (!c.check.empty()) out += " CHK:" + escapeAttr(c.check);
         // A NULL default is its own flag, so that a TEXT default of "NULL" or
         // "\N" is never confused with it.
         if (c.defaultValue) {
@@ -183,6 +184,10 @@ Result<TableSchema> decodeSchema(std::string_view tableName, std::string_view co
                 col.notNull = true;
             } else if (flag == "UQ") {
                 col.unique = true;
+            } else if (flag.starts_with("CHK:")) {
+                LEDGER_TRY(text, unescapeAttr(flag.substr(4)));
+                if (text.empty()) return corruption(where + "empty CHECK constraint");
+                col.check = std::move(text);
             } else if (flag == "DEFNULL") {
                 col.defaultValue = Value::null();
             } else if (flag.starts_with("DEF:")) {
