@@ -41,13 +41,17 @@ private:
 //
 //  - a bare name (`mydb`, no path separator) goes under the data root:
 //    `<root>/mydb`, where <root> is the LEDGER_DATA_DIR environment variable
-//    if set, otherwise `data/` relative to the current directory. This keeps
-//    every database in one place that the repository ignores;
+//    if set, otherwise `<defaultRoot>/data`. main.cpp passes the project
+//    directory (the parent of the `build/` directory holding the executable)
+//    so that `ledger mydb` opens the same database from any working
+//    directory. This keeps every database in one place the repository
+//    ignores;
 //  - anything containing a path separator (`./here`, `C:\x\y`, `../db`) is
 //    used as is.
 //
 // `envRoot` is the value of LEDGER_DATA_DIR (nullptr when unset).
-std::filesystem::path resolveDatabasePath(std::string_view arg, const char* envRoot);
+std::filesystem::path resolveDatabasePath(std::string_view arg, const char* envRoot,
+                                          const std::filesystem::path& defaultRoot = ".");
 
 inline constexpr std::string_view kDefaultDataDir = "data";
 

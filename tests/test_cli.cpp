@@ -216,8 +216,10 @@ TEST_CASE("formatSummary") {
 
 TEST_CASE("resolveDatabasePath: bare names go under the data root") {
     namespace fs = std::filesystem;
-    CHECK(resolveDatabasePath("mydb", nullptr) == fs::path("data") / "mydb");
-    CHECK(resolveDatabasePath("mydb", "") == fs::path("data") / "mydb");
+    CHECK(resolveDatabasePath("mydb", nullptr) == fs::path(".") / "data" / "mydb");
+    CHECK(resolveDatabasePath("mydb", "") == fs::path(".") / "data" / "mydb");
+    CHECK(resolveDatabasePath("mydb", nullptr, "D:/proj") == fs::path("D:/proj") / "data" / "mydb");
+    CHECK(resolveDatabasePath("mydb", "/srv/ledger", "D:/proj") == fs::path("/srv/ledger") / "mydb");
     CHECK(resolveDatabasePath("mydb", "/srv/ledger") == fs::path("/srv/ledger") / "mydb");
     // Anything that looks like a path is used as is.
     CHECK(resolveDatabasePath("./mydb", nullptr) == fs::path("./mydb"));
