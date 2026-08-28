@@ -25,7 +25,7 @@ template <typename T>
 T bindAs(std::string_view sql, const Catalog& cat) {
     auto parsed = parse(sql);
     REQUIRE_MESSAGE(parsed.ok(), (parsed.ok() ? "" : parsed.error().message));
-    auto bound = bind(parsed.value(), cat);
+    auto bound = ledger::bind(parsed.value(), cat);  // qualifié : ADL sur std::variant trouverait std::bind
     REQUIRE_MESSAGE(bound.ok(), "unexpected error: " << (bound.ok() ? "" : bound.error().message));
     REQUIRE(std::holds_alternative<T>(bound.value()));
     return std::move(std::get<T>(bound.value()));
@@ -34,7 +34,7 @@ T bindAs(std::string_view sql, const Catalog& cat) {
 Error errorOf(std::string_view sql, const Catalog& cat) {
     auto parsed = parse(sql);
     REQUIRE_MESSAGE(parsed.ok(), (parsed.ok() ? "" : parsed.error().message));
-    auto bound = bind(parsed.value(), cat);
+    auto bound = ledger::bind(parsed.value(), cat);  // qualifié : ADL sur std::variant trouverait std::bind
     REQUIRE_FALSE(bound.ok());
     return bound.error();
 }

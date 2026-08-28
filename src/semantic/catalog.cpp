@@ -4,20 +4,6 @@
 
 namespace ledger {
 
-std::optional<std::size_t> TableSchema::columnIndex(std::string_view column) const noexcept {
-    for (std::size_t i = 0; i < columns.size(); ++i) {
-        if (columns[i].name == column) return i;
-    }
-    return std::nullopt;
-}
-
-std::optional<std::size_t> TableSchema::primaryKeyIndex() const noexcept {
-    for (std::size_t i = 0; i < columns.size(); ++i) {
-        if (columns[i].primaryKey) return i;
-    }
-    return std::nullopt;
-}
-
 const TableSchema* Catalog::find(std::string_view table) const noexcept {
     const auto it = tables_.find(table);
     return it == tables_.end() ? nullptr : &it->second;
