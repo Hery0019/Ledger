@@ -9,6 +9,7 @@
 #include "core/row.h"
 #include "semantic/bound.h"
 #include "semantic/catalog.h"
+#include "semantic/eval.h"
 #include "storage/engine.h"
 
 namespace ledger {
@@ -31,9 +32,11 @@ struct QueryResult {
 // Only an IoError in the middle of the writes can leave a partial state; it
 // is propagated as is.
 //
-// SELECT: filter (WHERE must be true; NULL and false reject), stable sort by
-// Value::compare (NULL smaller than everything: first in ASC, last in DESC),
-// LIMIT, then projection. Without ORDER BY, rowid order.
+// SELECT: the FROM relation is materialized, then WHERE (true only), then
+// grouping if the query aggregates, then projection / ORDER BY keys, stable
+// sort (NULL smaller than everything), DISTINCT, OFFSET, LIMIT. UNION members
+// are run the same way and concatenated (deduplicated unless ALL) before the
+// final ORDER BY / OFFSET / LIMIT. Subqueries are run once, up front.
 class Executor {
 public:
     Executor(IStorageEngine& engine, Catalog& catalog) noexcept
@@ -53,6 +56,9 @@ private:
     Result<QueryResult> run(const BoundUpdate& s);
     Result<QueryResult> run(const BoundDelete& s);
 
+    // eval() with the current statement's subquery rows.
+    Result<Value> ev(const BoundExpr& e, const Row& row) const { return eval(e, row, subs_); }
+
     // Live rows satisfying `where` (nullptr = all of them).
     Result<std::vector<std::pair<RowId, Row>>> filter(const TableSchema& table,
                                                       const BoundExpr* where);
@@ -62,11 +68,15 @@ private:
     // GROUP BY + aggregates + HAVING: one group row per surviving group.
     Result<std::vector<Row>> aggregate(const BoundSelect& s,
                                        const std::vector<std::pair<RowId, Row>>& matches);
+    // A SELECT (without its UNION members) down to sorted, distinct rows:
+    // everything but OFFSET / LIMIT.
+    Result<std::vector<Row>> collect(const BoundSelect& s);
     Result<void> checkPrimaryKey(const TableSchema& table, const Value& key,
                                  const std::vector<RowId>& ignore);
 
     IStorageEngine& engine_;
     Catalog& catalog_;
+    const SubqueryRows* subs_ = nullptr;  // rows of the SELECT being run
 };
 
 }  // namespace ledger

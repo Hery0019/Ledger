@@ -7,7 +7,6 @@
 #include <utility>
 
 #include "semantic/binder.h"
-#include "semantic/eval.h"
 #include "sql/parser.h"
 
 namespace ledger {
@@ -18,6 +17,9 @@ Error rowError(RowId id, const Error& e) {
     return makeError(e.code, "row " + std::to_string(id) + ": " + e.message);
 }
 
+// Rows with an id (straight from a table) get the "row N:" prefix.
+Error atRow(RowId id, const Error& e) { return id ? rowError(id, e) : e; }
+
 // Total order for sorting: NULL before everything, otherwise Value::compare.
 // Types are homogeneous within a column, so compare cannot fail here.
 bool lessForSort(const Value& a, const Value& b) {
@@ -25,6 +27,18 @@ bool lessForSort(const Value& a, const Value& b) {
     if (b.isNull()) return false;
     return Value::compare(a, b).value() == Ordering::Less;
 }
+
+// Lexicographic order on rows (group keys, DISTINCT, UNION): NULLs group
+// together, before values.
+struct RowLess {
+    bool operator()(const Row& a, const Row& b) const {
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            if (lessForSort(a[i], b[i])) return true;
+            if (lessForSort(b[i], a[i])) return false;
+        }
+        return false;
+    }
+};
 
 }  // namespace
 
@@ -97,7 +111,7 @@ Result<std::vector<std::pair<RowId, Row>>> Executor::filter(const TableSchema& t
     std::optional<Error> failure;
     LEDGER_TRY_VOID(engine_.scan(table.name, [&](RowId id, const Row& row) {
         if (where) {
-            auto v = eval(*where, row);
+            auto v = ev(*where, row);
             if (!v.ok()) {
                 failure = rowError(id, v.error());
                 return false;
@@ -215,17 +229,6 @@ Result<Value> finalize(const AggState& st, AggFunc f) {
     return makeError(ErrorCode::Internal, "finalize: unknown aggregate");
 }
 
-// Lexicographic order on group keys (NULLs group together, before values).
-struct RowLess {
-    bool operator()(const Row& a, const Row& b) const {
-        for (std::size_t i = 0; i < a.size(); ++i) {
-            if (lessForSort(a[i], b[i])) return true;
-            if (lessForSort(b[i], a[i])) return false;
-        }
-        return false;
-    }
-};
-
 }  // namespace
 
 // Groups the filtered rows and returns one row per surviving group:
@@ -243,8 +246,8 @@ Result<std::vector<Row>> Executor::aggregate(const BoundSelect& s,
         Row keys;
         keys.reserve(s.groupBy.size());
         for (const auto& k : s.groupBy) {
-            auto v = eval(*k, row);
-            if (!v.ok()) return id ? rowError(id, v.error()) : v.error();
+            auto v = ev(*k, row);
+            if (!v.ok()) return atRow(id, v.error());
             keys.push_back(std::move(v).value());
         }
         auto it = index.find(keys);
@@ -259,10 +262,10 @@ Result<std::vector<Row>> Executor::aggregate(const BoundSelect& s,
                 ++g.states[a].count;  // COUNT(*)
                 continue;
             }
-            auto v = eval(*agg.arg, row);
-            if (!v.ok()) return id ? rowError(id, v.error()) : v.error();
+            auto v = ev(*agg.arg, row);
+            if (!v.ok()) return atRow(id, v.error());
             auto acc = accumulate(g.states[a], agg.func, v.value());
-            if (!acc.ok()) return id ? rowError(id, acc.error()) : acc.error();
+            if (!acc.ok()) return atRow(id, acc.error());
         }
     }
     // No GROUP BY: the whole input is one group, even when empty.
@@ -279,7 +282,7 @@ Result<std::vector<Row>> Executor::aggregate(const BoundSelect& s,
             groupRow.push_back(std::move(v));
         }
         if (s.having) {
-            LEDGER_TRY(keep, eval(*s.having, groupRow));
+            LEDGER_TRY(keep, ev(*s.having, groupRow));
             if (keep.isNull() || !keep.asBool()) continue;
         }
         out.push_back(std::move(groupRow));
@@ -298,8 +301,8 @@ Result<std::vector<std::pair<RowId, Row>>> Executor::evaluate(const BoundRelatio
                 LEDGER_TRY(input, evaluate(*n.input));
                 Rows out;
                 for (auto& [id, row] : input) {
-                    auto v = eval(*n.predicate, row);
-                    if (!v.ok()) return id ? rowError(id, v.error()) : v.error();
+                    auto v = ev(*n.predicate, row);
+                    if (!v.ok()) return atRow(id, v.error());
                     if (!v.value().isNull() && v.value().asBool()) out.emplace_back(id, std::move(row));
                 }
                 return out;
@@ -311,8 +314,8 @@ Result<std::vector<std::pair<RowId, Row>>> Executor::evaluate(const BoundRelatio
                     Row projected;
                     projected.reserve(n.exprs.size());
                     for (const auto& e : n.exprs) {
-                        auto v = eval(*e, row);
-                        if (!v.ok()) return id ? rowError(id, v.error()) : v.error();
+                        auto v = ev(*e, row);
+                        if (!v.ok()) return atRow(id, v.error());
                         projected.push_back(std::move(v).value());
                     }
                     out.emplace_back(id, std::move(projected));
@@ -330,7 +333,7 @@ Result<std::vector<std::pair<RowId, Row>>> Executor::evaluate(const BoundRelatio
                     for (const auto& [rid, rrow] : right) {
                         Row combined = lrow;
                         combined.insert(combined.end(), rrow.begin(), rrow.end());
-                        auto v = eval(*n.on, combined);
+                        auto v = ev(*n.on, combined);
                         if (!v.ok()) return v.error();
                         if (v.value().isNull() || !v.value().asBool()) continue;
                         matched = true;
@@ -348,7 +351,26 @@ Result<std::vector<std::pair<RowId, Row>>> Executor::evaluate(const BoundRelatio
         rel.node);
 }
 
-Result<QueryResult> Executor::run(const BoundSelect& s) {
+// Runs one SELECT body (no UNION members, no OFFSET/LIMIT): rows of the
+// relation -> WHERE -> grouping -> projection and sort keys -> stable sort
+// -> DISTINCT. The result is the projected rows, in order.
+Result<std::vector<Row>> Executor::collect(const BoundSelect& s) {
+    // Subqueries first, each run once; their rows are visible to every
+    // expression of this SELECT through subs_.
+    SubqueryRows subqueryRows;
+    subqueryRows.reserve(s.subqueries.size());
+    for (const auto& sub : s.subqueries) {
+        LEDGER_TRY(r, run(*sub));
+        subqueryRows.push_back(std::move(r.rows));
+    }
+    const SubqueryRows* const saved = subs_;
+    subs_ = &subqueryRows;
+    struct Restore {
+        const SubqueryRows*& slot;
+        const SubqueryRows* value;
+        ~Restore() { slot = value; }
+    } restore{subs_, saved};
+
     LEDGER_TRY(source, evaluate(*s.relation));
 
     // WHERE over the relation's rows.
@@ -357,8 +379,8 @@ Result<QueryResult> Executor::run(const BoundSelect& s) {
         // A WHERE that is always NULL keeps nothing.
     } else if (s.where) {
         for (auto& [id, row] : source) {
-            auto v = eval(*s.where, row);
-            if (!v.ok()) return id ? rowError(id, v.error()) : v.error();
+            auto v = ev(*s.where, row);
+            if (!v.ok()) return atRow(id, v.error());
             if (!v.value().isNull() && v.value().asBool()) matches.emplace_back(id, std::move(row));
         }
     } else {
@@ -377,7 +399,9 @@ Result<QueryResult> Executor::run(const BoundSelect& s) {
     }
 
     // Sort keys and projected values are both computed from the input row,
-    // so ORDER BY may use columns the projection does not keep.
+    // so ORDER BY may use columns the projection does not keep. With UNION
+    // members the keys are computed later, on the output rows.
+    const bool keysOnOutput = !s.unions.empty();
     struct Item {
         Row keys;
         Row projected;
@@ -386,22 +410,24 @@ Result<QueryResult> Executor::run(const BoundSelect& s) {
     items.reserve(inputs.size());
     for (const auto& [id, row] : inputs) {
         Item item;
-        item.keys.reserve(s.orderBy.size());
-        for (const auto& ob : s.orderBy) {
-            auto v = eval(*ob.expr, row);
-            if (!v.ok()) return (s.aggregated || !id) ? v.error() : rowError(id, v.error());
-            item.keys.push_back(std::move(v).value());
+        if (!keysOnOutput) {
+            item.keys.reserve(s.orderBy.size());
+            for (const auto& ob : s.orderBy) {
+                auto v = ev(*ob.expr, row);
+                if (!v.ok()) return atRow(id, v.error());
+                item.keys.push_back(std::move(v).value());
+            }
         }
         item.projected.reserve(s.projection.size());
         for (const auto& e : s.projection) {
-            auto v = eval(*e, row);
-            if (!v.ok()) return (s.aggregated || !id) ? v.error() : rowError(id, v.error());
+            auto v = ev(*e, row);
+            if (!v.ok()) return atRow(id, v.error());
             item.projected.push_back(std::move(v).value());
         }
         items.push_back(std::move(item));
     }
 
-    if (!s.orderBy.empty()) {
+    if (!s.orderBy.empty() && !keysOnOutput) {
         std::stable_sort(items.begin(), items.end(), [&](const Item& a, const Item& b) {
             for (std::size_t k = 0; k < s.orderBy.size(); ++k) {
                 const bool desc = s.orderBy[k].descending;
@@ -413,29 +439,69 @@ Result<QueryResult> Executor::run(const BoundSelect& s) {
             return false;
         });
     }
-    // DISTINCT: keep the first occurrence of every projected row (after the
-    // sort, so "first" is well defined when ORDER BY is present).
+
+    std::vector<Row> out;
+    out.reserve(items.size());
     if (s.distinct) {
+        // Keep the first occurrence of every projected row (after the sort,
+        // so "first" is well defined when ORDER BY is present).
         std::map<Row, bool, RowLess> seen;
-        std::vector<Item> unique;
         for (auto& item : items) {
-            if (seen.emplace(item.projected, true).second) unique.push_back(std::move(item));
+            if (seen.emplace(item.projected, true).second) out.push_back(std::move(item.projected));
         }
-        items = std::move(unique);
+    } else {
+        for (auto& item : items) out.push_back(std::move(item.projected));
     }
+    return out;
+}
+
+Result<QueryResult> Executor::run(const BoundSelect& s) {
+    LEDGER_TRY(rows, collect(s));
+
+    if (!s.unions.empty()) {
+        // Concatenate every member; UNION (without ALL) removes duplicates
+        // across the whole result, first occurrence kept.
+        bool dedupe = false;
+        for (const auto& member : s.unions) {
+            LEDGER_TRY(more, collect(*member.select));
+            rows.insert(rows.end(), std::make_move_iterator(more.begin()), std::make_move_iterator(more.end()));
+            dedupe = dedupe || !member.all;
+        }
+        if (dedupe) {
+            std::map<Row, bool, RowLess> seen;
+            std::vector<Row> unique;
+            for (auto& row : rows) {
+                if (seen.emplace(row, true).second) unique.push_back(std::move(row));
+            }
+            rows = std::move(unique);
+        }
+        if (!s.orderBy.empty()) {
+            // Keys are output columns: evaluated on the result row itself.
+            std::stable_sort(rows.begin(), rows.end(), [&](const Row& a, const Row& b) {
+                for (const auto& ob : s.orderBy) {
+                    const std::size_t idx = std::get<BoundColumn>(ob.expr->node).index;
+                    const Value& x = ob.descending ? b[idx] : a[idx];
+                    const Value& y = ob.descending ? a[idx] : b[idx];
+                    if (lessForSort(x, y)) return true;
+                    if (lessForSort(y, x)) return false;
+                }
+                return false;
+            });
+        }
+    }
+
     if (s.offset) {
-        const auto skip = std::min(static_cast<std::size_t>(*s.offset), items.size());
-        items.erase(items.begin(), items.begin() + static_cast<std::ptrdiff_t>(skip));
+        const auto skip = std::min(static_cast<std::size_t>(*s.offset), rows.size());
+        rows.erase(rows.begin(), rows.begin() + static_cast<std::ptrdiff_t>(skip));
     }
-    if (s.limit && static_cast<std::size_t>(*s.limit) < items.size()) {
-        items.resize(static_cast<std::size_t>(*s.limit));
+    if (s.limit && static_cast<std::size_t>(*s.limit) < rows.size()) {
+        rows.resize(static_cast<std::size_t>(*s.limit));
     }
 
     QueryResult out;
     out.kind = ResultKind::Select;
     out.columns = s.columnNames;
-    out.rows.reserve(items.size());
-    for (auto& item : items) out.rows.push_back(std::move(item.projected));
+    out.rows = std::move(rows);
     return out;
 }
 
@@ -448,7 +514,7 @@ Result<QueryResult> Executor::run(const BoundUpdate& s) {
     for (const auto& [id, original] : matches) {
         Row next = original;
         for (const auto& [col, expr] : s.assignments) {
-            auto v = eval(*expr, original);
+            auto v = ev(*expr, original);
             if (!v.ok()) return rowError(id, v.error());
             // The binder refused a guaranteed NULL; here we catch a NULL that
             // comes from a nullable column (`SET name = other_nullable`).

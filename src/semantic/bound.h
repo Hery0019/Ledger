@@ -75,6 +75,25 @@ struct BoundCase {
     BoundExprPtr elseExpr;  // nullptr = NULL
 };
 
+// Subquery references. The nested SELECT lives in the enclosing
+// BoundSelect::subqueries at index `slot`; the executor runs it once (they
+// are never correlated) and hands the rows to eval() through the
+// SubqueryRows table.
+struct BoundInSubquery {
+    BoundExprPtr value;
+    std::size_t slot;
+    bool negated;
+};
+
+struct BoundExists {
+    std::size_t slot;
+    bool negated;
+};
+
+struct BoundScalarSubquery {
+    std::size_t slot;
+};
+
 // `value [NOT] LIKE pattern` over TEXT: `%` any sequence, `_` one character.
 struct BoundLike {
     BoundExprPtr value;
@@ -84,7 +103,7 @@ struct BoundLike {
 
 struct BoundExpr {
     std::variant<Value, BoundColumn, BoundUnary, BoundBinary, BoundIsNull, BoundCast, BoundInList, BoundLike,
-                 BoundCall, BoundCase>
+                 BoundCall, BoundCase, BoundInSubquery, BoundExists, BoundScalarSubquery>
         node;
     // Static type. DataType::Null means "always NULL" (e.g. the NULL literal,
     // or NULL + NULL). An expression of type Int can still produce NULL at
@@ -204,6 +223,20 @@ struct BoundSelect {
     std::vector<BoundExprPtr> groupBy;      // evaluated on source rows
     std::vector<BoundAggregate> aggregates;
     BoundExprPtr having;                    // nullptr = keep every group
+
+    // Uncorrelated subqueries used by this SELECT's expressions (WHERE,
+    // projection, HAVING, ORDER BY, join conditions, view bodies), each run
+    // once before the rows are evaluated.
+    std::vector<std::unique_ptr<BoundSelect>> subqueries;
+
+    // UNION [ALL] members; their output must match the head column by column
+    // (same count, comparable types). With unions, `orderBy` reads the output
+    // row (BoundColumn indices into the projected row), not the source row.
+    struct UnionMember {
+        bool all;
+        std::unique_ptr<BoundSelect> select;
+    };
+    std::vector<UnionMember> unions;
 };
 
 struct BoundUpdate {

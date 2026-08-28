@@ -23,10 +23,13 @@ meant for personal use afterwards.
 - `SELECT DISTINCT ...`, `LIMIT n OFFSET m`.
 - Scalar functions `UPPER`, `LOWER`, `LENGTH`, `TRIM`, `ABS`, `ROUND(x [, digits])`,
   `COALESCE(...)`, `NULLIF(a, b)`; `CASE [x] WHEN ... THEN ... [ELSE ...] END`.
+- Uncorrelated subqueries: `x [NOT] IN (SELECT ...)`, `[NOT] EXISTS (SELECT ...)`,
+  scalar `(SELECT ...)` (one column, at most one row). `UNION` / `UNION ALL`
+  with a final `ORDER BY` on output column names.
 - Expressions: `+ - * /`, comparisons, `AND OR NOT`, `IS [NOT] NULL`,
   `[NOT] IN (...)`, `[NOT] BETWEEN a AND b`, `[NOT] LIKE 'pattern'` (`%`, `_`),
   SQL three-valued logic. Case-insensitive identifiers.
-- No joins, indexes or transactions.
+- No correlated subqueries, indexes or transactions.
 
 ## Build and test
 

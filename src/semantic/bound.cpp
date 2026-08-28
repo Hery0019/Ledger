@@ -53,10 +53,14 @@ BoundExprPtr cloneExpr(const BoundExpr& e) {
                 BoundCall out{n.func, {}};
                 for (const auto& a : n.args) out.args.push_back(cloneExpr(*a));
                 return out;
-            } else {
+            } else if constexpr (std::is_same_v<N, BoundCase>) {
                 BoundCase out{{}, n.elseExpr ? cloneExpr(*n.elseExpr) : nullptr};
                 for (const auto& [c, r] : n.whens) out.whens.emplace_back(cloneExpr(*c), cloneExpr(*r));
                 return out;
+            } else if constexpr (std::is_same_v<N, BoundInSubquery>) {
+                return BoundInSubquery{cloneExpr(*n.value), n.slot, n.negated};
+            } else {
+                return n;  // BoundExists, BoundScalarSubquery: a slot number
             }
         },
         e.node);
