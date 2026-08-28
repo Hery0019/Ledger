@@ -148,9 +148,12 @@ TEST_CASE("malformed numbers are errors, not split tokens") {
     CHECK(errorOf("1.5e3x") == "1:1: malformed number '1.5e3': unexpected 'x'");
 }
 
-TEST_CASE("a lone dot is an error") {
-    CHECK(errorOf(".") == "1:1: unexpected character '.'");
-    CHECK(errorOf("a.b") == "1:2: unexpected character '.'");
+TEST_CASE("a dot is a token (qualified names), never part of an identifier") {
+    CHECK(kinds(".") == std::vector<TokenKind>{TokenKind::Dot, TokenKind::End});
+    CHECK(kinds("a.b") == std::vector<TokenKind>{TokenKind::Identifier, TokenKind::Dot,
+                                                 TokenKind::Identifier, TokenKind::End});
+    CHECK(kinds("t.*") == std::vector<TokenKind>{TokenKind::Identifier, TokenKind::Dot, TokenKind::Star,
+                                                 TokenKind::End});
 }
 
 // ---- strings ---------------------------------------------------------------

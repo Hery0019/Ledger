@@ -150,7 +150,7 @@ TEST_CASE("SELECT * is a star with no items") {
     const auto s = parseAs<Select>("SELECT * FROM t");
     CHECK(s.star);
     CHECK(s.items.empty());
-    CHECK(s.table == "t");
+    CHECK(s.from.name == "t");
     CHECK(s.where == nullptr);
     CHECK(s.orderBy.empty());
     CHECK_FALSE(s.limit.has_value());
@@ -164,7 +164,7 @@ TEST_CASE("SELECT with explicit columns") {
     CHECK(show(*s.items[1].expr) == "b");
     CHECK(show(*s.items[2].expr) == "c");
     CHECK(s.items[0].alias.empty());
-    CHECK(s.table == "t");
+    CHECK(s.from.name == "t");
 }
 
 TEST_CASE("SELECT items are expressions with optional aliases") {

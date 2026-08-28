@@ -12,11 +12,11 @@
 
 namespace ledger {
 
-// A registered view: its definition plus the name of what it reads from (a
-// table or another view), used for dependency checks on DROP.
+// A registered view: its definition plus the names of what it reads from
+// (tables or other views, FROM and JOINs), used for dependency checks on DROP.
 struct ViewEntry {
     ViewDef def;
-    std::string source;
+    std::vector<std::string> sources;
 };
 
 // The set of known schemas and views. In memory, single process: the storage
@@ -44,9 +44,9 @@ public:
 
     [[nodiscard]] const ViewEntry* findView(std::string_view view) const noexcept;
 
-    // `source` is the table or view the SELECT reads from; the caller (the
-    // binder) has already parsed and validated the definition.
-    Result<void> addView(ViewDef def, std::string source);  // AlreadyExists (table or view)
+    // `sources` are the tables and views the SELECT reads from; the caller
+    // (the binder) has already parsed and validated the definition.
+    Result<void> addView(ViewDef def, std::vector<std::string> sources);  // AlreadyExists (table or view)
     Result<void> removeView(std::string_view view);         // NotFound
 
     // Creation order, which is also a valid load order (a view is always

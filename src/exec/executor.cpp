@@ -64,7 +64,7 @@ Result<QueryResult> Executor::run(const BoundDropTable& s) {
 // is updated first, then the whole list is saved; on a save failure the
 // catalog change is rolled back so that memory and disk never disagree.
 Result<QueryResult> Executor::run(const BoundCreateView& s) {
-    LEDGER_TRY_VOID(catalog_.addView(s.def, s.source));
+    LEDGER_TRY_VOID(catalog_.addView(s.def, s.sources));
     auto saved = engine_.saveViews(catalog_.views());
     if (!saved.ok()) {
         (void)catalog_.removeView(s.def.name);
@@ -80,7 +80,7 @@ Result<QueryResult> Executor::run(const BoundDropView& s) {
     LEDGER_TRY_VOID(catalog_.removeView(s.name));
     auto saved = engine_.saveViews(catalog_.views());
     if (!saved.ok()) {
-        (void)catalog_.addView(backup.def, backup.source);
+        (void)catalog_.addView(backup.def, backup.sources);
         return saved.error();
     }
     return QueryResult{};
@@ -244,7 +244,7 @@ Result<std::vector<Row>> Executor::aggregate(const BoundSelect& s,
         keys.reserve(s.groupBy.size());
         for (const auto& k : s.groupBy) {
             auto v = eval(*k, row);
-            if (!v.ok()) return rowError(id, v.error());
+            if (!v.ok()) return id ? rowError(id, v.error()) : v.error();
             keys.push_back(std::move(v).value());
         }
         auto it = index.find(keys);
@@ -260,9 +260,9 @@ Result<std::vector<Row>> Executor::aggregate(const BoundSelect& s,
                 continue;
             }
             auto v = eval(*agg.arg, row);
-            if (!v.ok()) return rowError(id, v.error());
+            if (!v.ok()) return id ? rowError(id, v.error()) : v.error();
             auto acc = accumulate(g.states[a], agg.func, v.value());
-            if (!acc.ok()) return rowError(id, acc.error());
+            if (!acc.ok()) return id ? rowError(id, acc.error()) : acc.error();
         }
     }
     // No GROUP BY: the whole input is one group, even when empty.
@@ -287,8 +287,83 @@ Result<std::vector<Row>> Executor::aggregate(const BoundSelect& s,
     return out;
 }
 
+Result<std::vector<std::pair<RowId, Row>>> Executor::evaluate(const BoundRelation& rel) {
+    using Rows = std::vector<std::pair<RowId, Row>>;
+    return std::visit(
+        [&](const auto& n) -> Result<Rows> {
+            using N = std::decay_t<decltype(n)>;
+            if constexpr (std::is_same_v<N, RelScan>) {
+                return filter(*n.table, nullptr);
+            } else if constexpr (std::is_same_v<N, RelFilter>) {
+                LEDGER_TRY(input, evaluate(*n.input));
+                Rows out;
+                for (auto& [id, row] : input) {
+                    auto v = eval(*n.predicate, row);
+                    if (!v.ok()) return id ? rowError(id, v.error()) : v.error();
+                    if (!v.value().isNull() && v.value().asBool()) out.emplace_back(id, std::move(row));
+                }
+                return out;
+            } else if constexpr (std::is_same_v<N, RelProject>) {
+                LEDGER_TRY(input, evaluate(*n.input));
+                Rows out;
+                out.reserve(input.size());
+                for (const auto& [id, row] : input) {
+                    Row projected;
+                    projected.reserve(n.exprs.size());
+                    for (const auto& e : n.exprs) {
+                        auto v = eval(*e, row);
+                        if (!v.ok()) return id ? rowError(id, v.error()) : v.error();
+                        projected.push_back(std::move(v).value());
+                    }
+                    out.emplace_back(id, std::move(projected));
+                }
+                return out;
+            } else {
+                // Nested-loop join: every pair is tested against ON. Fine for
+                // personal-sized tables; an index-driven join can come later.
+                LEDGER_TRY(left, evaluate(*n.left));
+                LEDGER_TRY(right, evaluate(*n.right));
+                const std::size_t rightWidth = n.right->columns.size();
+                Rows out;
+                for (const auto& [lid, lrow] : left) {
+                    bool matched = false;
+                    for (const auto& [rid, rrow] : right) {
+                        Row combined = lrow;
+                        combined.insert(combined.end(), rrow.begin(), rrow.end());
+                        auto v = eval(*n.on, combined);
+                        if (!v.ok()) return v.error();
+                        if (v.value().isNull() || !v.value().asBool()) continue;
+                        matched = true;
+                        out.emplace_back(0, std::move(combined));
+                    }
+                    if (!matched && n.kind == JoinKind::Left) {
+                        Row padded = lrow;
+                        padded.resize(padded.size() + rightWidth, Value::null());
+                        out.emplace_back(0, std::move(padded));
+                    }
+                }
+                return out;
+            }
+        },
+        rel.node);
+}
+
 Result<QueryResult> Executor::run(const BoundSelect& s) {
-    LEDGER_TRY(matches, filter(*s.table, s.where.get()));
+    LEDGER_TRY(source, evaluate(*s.relation));
+
+    // WHERE over the relation's rows.
+    std::vector<std::pair<RowId, Row>> matches;
+    if (s.where && s.where->type == DataType::Null) {
+        // A WHERE that is always NULL keeps nothing.
+    } else if (s.where) {
+        for (auto& [id, row] : source) {
+            auto v = eval(*s.where, row);
+            if (!v.ok()) return id ? rowError(id, v.error()) : v.error();
+            if (!v.value().isNull() && v.value().asBool()) matches.emplace_back(id, std::move(row));
+        }
+    } else {
+        matches = std::move(source);
+    }
 
     // The rows the projection and ORDER BY read: source rows, or one group
     // row per group when aggregating.
@@ -314,13 +389,13 @@ Result<QueryResult> Executor::run(const BoundSelect& s) {
         item.keys.reserve(s.orderBy.size());
         for (const auto& ob : s.orderBy) {
             auto v = eval(*ob.expr, row);
-            if (!v.ok()) return s.aggregated ? v.error() : rowError(id, v.error());
+            if (!v.ok()) return (s.aggregated || !id) ? v.error() : rowError(id, v.error());
             item.keys.push_back(std::move(v).value());
         }
         item.projected.reserve(s.projection.size());
         for (const auto& e : s.projection) {
             auto v = eval(*e, row);
-            if (!v.ok()) return s.aggregated ? v.error() : rowError(id, v.error());
+            if (!v.ok()) return (s.aggregated || !id) ? v.error() : rowError(id, v.error());
             item.projected.push_back(std::move(v).value());
         }
         items.push_back(std::move(item));

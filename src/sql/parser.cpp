@@ -219,7 +219,7 @@ private:
         return Statement{Insert{std::move(table), std::move(columns), std::move(values)}};
     }
 
-    // SELECT (* | item {, item}) FROM name [WHERE expr]
+    // SELECT (* | item {, item}) FROM tableRef {join} [WHERE expr]
     //        [GROUP BY expr {, expr}] [HAVING expr]
     //        [ORDER BY expr [ASC|DESC] {, expr [ASC|DESC]}] [LIMIT n]
     // item := expr [[AS] alias]
@@ -229,6 +229,15 @@ private:
         s.star = accept(TokenKind::Star);
         if (!s.star) {
             do {
+                // `t.*`: every column of one source.
+                if (at(TokenKind::Identifier) && peekAhead(1).kind == TokenKind::Dot &&
+                    peekAhead(2).kind == TokenKind::Star) {
+                    SelectItem item{nullptr, {}, advance().text};
+                    advance();  // .
+                    advance();  // *
+                    s.items.push_back(std::move(item));
+                    continue;
+                }
                 LEDGER_TRY(e, expression());
                 std::string alias;
                 if (accept(TokenKind::KwAs)) {
@@ -237,13 +246,31 @@ private:
                 } else if (at(TokenKind::Identifier)) {
                     alias = advance().text;  // `expr alias` without AS
                 }
-                s.items.push_back(SelectItem{std::move(e), std::move(alias)});
+                s.items.push_back(SelectItem{std::move(e), std::move(alias), {}});
             } while (accept(TokenKind::Comma));
         }
 
         LEDGER_TRY_VOID(expect(TokenKind::KwFrom));
-        LEDGER_TRY(table, identifier());
-        s.table = std::move(table);
+        LEDGER_TRY(from, tableRef());
+        s.from = std::move(from);
+
+        // [INNER | LEFT [OUTER]] JOIN tableRef ON expr
+        for (;;) {
+            JoinKind kind = JoinKind::Inner;
+            if (accept(TokenKind::KwInner)) {
+                LEDGER_TRY_VOID(expect(TokenKind::KwJoin));
+            } else if (accept(TokenKind::KwLeft)) {
+                accept(TokenKind::KwOuter);
+                LEDGER_TRY_VOID(expect(TokenKind::KwJoin));
+                kind = JoinKind::Left;
+            } else if (!accept(TokenKind::KwJoin)) {
+                break;
+            }
+            LEDGER_TRY(table, tableRef());
+            LEDGER_TRY_VOID(expect(TokenKind::KwOn));
+            LEDGER_TRY(on, expression());
+            s.joins.push_back(Join{kind, std::move(table), std::move(on)});
+        }
 
         LEDGER_TRY(where, optionalWhere());
         s.where = std::move(where);
@@ -314,6 +341,24 @@ private:
     Result<ExprPtr> optionalWhere() {
         if (!accept(TokenKind::KwWhere)) return ExprPtr{};
         return expression();
+    }
+
+    // name [[AS] alias]
+    Result<TableRef> tableRef() {
+        LEDGER_TRY(name, identifier());
+        std::string alias = name;
+        if (accept(TokenKind::KwAs)) {
+            LEDGER_TRY(a, identifier());
+            alias = std::move(a);
+        } else if (at(TokenKind::Identifier)) {
+            alias = advance().text;
+        }
+        return TableRef{std::move(name), std::move(alias)};
+    }
+
+    [[nodiscard]] const Token& peekAhead(std::size_t n) const noexcept {
+        const std::size_t i = pos_ + n;
+        return tokens_[i < tokens_.size() ? i : tokens_.size() - 1];
     }
 
     // ---- expressions -------------------------------------------------------
@@ -432,7 +477,13 @@ private:
             case TokenKind::KwNull:  advance(); return make(Literal{Value::null()}, tok);
             case TokenKind::Identifier: {
                 advance();
-                if (!accept(TokenKind::LParen)) return make(ColumnRef{tok.text}, tok);
+                // qualifier.column
+                if (accept(TokenKind::Dot)) {
+                    if (at(TokenKind::Star)) return unexpected("column name after '.' (t.* is only valid in the SELECT list)");
+                    LEDGER_TRY(column, identifier());
+                    return make(ColumnRef{tok.text, std::move(column)}, tok);
+                }
+                if (!accept(TokenKind::LParen)) return make(ColumnRef{{}, tok.text}, tok);
                 // name( * ) | name( [expr {, expr}] )
                 Call call{tok.text, {}, false};
                 if (accept(TokenKind::Star)) {

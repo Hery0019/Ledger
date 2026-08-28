@@ -56,6 +56,9 @@ private:
     // Live rows satisfying `where` (nullptr = all of them).
     Result<std::vector<std::pair<RowId, Row>>> filter(const TableSchema& table,
                                                       const BoundExpr* where);
+    // Materializes a bound relation (FROM clause). Rows that come straight
+    // from one table keep their rowid for error messages; joined rows use 0.
+    Result<std::vector<std::pair<RowId, Row>>> evaluate(const BoundRelation& rel);
     // GROUP BY + aggregates + HAVING: one group row per surviving group.
     Result<std::vector<Row>> aggregate(const BoundSelect& s,
                                        const std::vector<std::pair<RowId, Row>>& matches);

@@ -51,10 +51,10 @@ const ViewEntry* Catalog::findView(std::string_view view) const noexcept {
     return nullptr;
 }
 
-Result<void> Catalog::addView(ViewDef def, std::string source) {
+Result<void> Catalog::addView(ViewDef def, std::vector<std::string> sources) {
     if (contains(def.name)) return nameTaken(def.name, "table");
     if (findView(def.name)) return nameTaken(def.name, "view");
-    views_.push_back(ViewEntry{std::move(def), std::move(source)});
+    views_.push_back(ViewEntry{std::move(def), std::move(sources)});
     return {};
 }
 
@@ -85,7 +85,9 @@ std::vector<std::string_view> Catalog::viewNames() const {
 std::vector<std::string_view> Catalog::dependents(std::string_view name) const {
     std::vector<std::string_view> out;
     for (const auto& v : views_) {
-        if (v.source == name) out.push_back(v.def.name);
+        if (std::find(v.sources.begin(), v.sources.end(), name) != v.sources.end()) {
+            out.push_back(v.def.name);
+        }
     }
     return out;
 }

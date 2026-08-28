@@ -25,10 +25,6 @@ bool isComparison(BinaryOp op) noexcept {
 
 bool isLogical(BinaryOp op) noexcept { return op == BinaryOp::And || op == BinaryOp::Or; }
 
-Error notFoundTable(const std::string& name) {
-    return makeError(ErrorCode::NotFound, "unknown table or view '" + name + "'");
-}
-
 // Bound to a view nesting level: a view cannot read from itself (creation
 // requires the source to exist first), so this only guards against a
 // hand-edited views file.
@@ -67,53 +63,45 @@ bool containsAggregate(const ast::Expr& e) {
         e.node);
 }
 
-// One column visible to an expression: its output name, its type, and the
-// bound expression that computes it over the underlying table's row. For a
-// table that is a plain BoundColumn; for a view it is whatever the view
-// selected (a column, or a computed expression).
-struct Slot {
-    std::string name;
-    DataType type;
-    BoundExprPtr expr;
-};
-
-// What a FROM clause resolves to: the underlying table, the columns visible
-// through the (possibly nested) views, and the filters those views apply.
-struct Source {
-    const TableSchema* table;
-    std::vector<Slot> slots;
-    std::vector<BoundExprPtr> filters;  // one per view level with a WHERE
-    std::string name;                   // as written in the FROM
-    bool isView;
-};
-
-// Column scope of an expression. nullptr scope = no column allowed
-// (INSERT ... VALUES).
+// Column scope of an expression: the output columns of a relation. nullptr
+// scope = no column allowed (INSERT ... VALUES).
 struct Scope {
-    const std::vector<Slot>* slots;
-    std::string_view name;
-    bool isView;
+    const std::vector<RelColumn>* columns;
+    std::string_view name;  // single source: its alias, for messages
+    bool isView;            // single source: table or view, for messages
+    bool multi;             // several sources (joins): messages omit the source
 
-    [[nodiscard]] const Slot* resolve(std::string_view column) const noexcept {
-        for (const auto& s : *slots) {
-            if (s.name == column) return &s;
+    Result<std::size_t> resolve(const ast::ColumnRef& c) const {
+        std::vector<std::size_t> found;
+        bool qualifierSeen = false;
+        for (std::size_t i = 0; i < columns->size(); ++i) {
+            const RelColumn& col = (*columns)[i];
+            if (!c.qualifier.empty()) {
+                if (col.qualifier != c.qualifier) continue;
+                qualifierSeen = true;
+            }
+            if (col.name == c.name) found.push_back(i);
         }
-        return nullptr;
+        if (found.size() == 1) return found[0];
+        if (found.size() > 1) {
+            return makeError(ErrorCode::SyntaxError,
+                             "ambiguous column '" + c.name + "' (use " + (*columns)[found[0]].qualifier +
+                                 "." + c.name + " or " + (*columns)[found[1]].qualifier + "." + c.name + ")");
+        }
+        if (!c.qualifier.empty()) {
+            if (!qualifierSeen) {
+                return makeError(ErrorCode::NotFound, "unknown table alias '" + c.qualifier + "'");
+            }
+            return makeError(ErrorCode::NotFound, "unknown column '" + c.qualifier + "." + c.name + "'");
+        }
+        if (multi) return makeError(ErrorCode::NotFound, "unknown column '" + c.name + "'");
+        return makeError(ErrorCode::NotFound, "unknown column '" + c.name + "' in " +
+                                                  (isView ? "view '" : "table '") + std::string(name) + "'");
     }
 
-    // Position of a column in the slot list (= its index in the table's row
-    // for a table scope).
-    [[nodiscard]] std::optional<std::size_t> position(std::string_view column) const noexcept {
-        for (std::size_t i = 0; i < slots->size(); ++i) {
-            if ((*slots)[i].name == column) return i;
-        }
-        return std::nullopt;
-    }
-
-    [[nodiscard]] Error unknownColumn(const std::string& column) const {
-        return makeError(ErrorCode::NotFound, "unknown column '" + column + "' in " +
-                                                  (isView ? "view '" : "table '") +
-                                                  std::string(name) + "'");
+    // Unqualified lookup by name only, for INSERT/UPDATE column lists.
+    Result<std::size_t> resolve(const std::string& column) const {
+        return resolve(ast::ColumnRef{{}, column});
     }
 };
 
@@ -131,14 +119,11 @@ struct GroupContext {
     std::vector<DataType> aggTypes;
 };
 
-std::vector<Slot> tableSlots(const TableSchema& table) {
-    std::vector<Slot> slots;
-    slots.reserve(table.columns.size());
-    for (std::size_t i = 0; i < table.columns.size(); ++i) {
-        slots.push_back(Slot{table.columns[i].name, table.columns[i].type,
-                             std::make_unique<BoundExpr>(BoundExpr{BoundColumn{i}, table.columns[i].type})});
-    }
-    return slots;
+std::vector<RelColumn> tableColumns(const TableSchema& table, const std::string& qualifier) {
+    std::vector<RelColumn> out;
+    out.reserve(table.columns.size());
+    for (const auto& c : table.columns) out.push_back(RelColumn{qualifier, c.name, c.type});
+    return out;
 }
 
 // Output name of a SELECT item without alias: a bare column keeps its name,
@@ -147,6 +132,10 @@ std::string itemName(const ast::SelectItem& item) {
     if (!item.alias.empty()) return item.alias;
     if (const auto* c = std::get_if<ast::ColumnRef>(&item.expr->node)) return c->name;
     return ast::exprToString(*item.expr);
+}
+
+BoundRelationPtr makeRelation(decltype(BoundRelation::node) node, std::vector<RelColumn> columns) {
+    return std::make_unique<BoundRelation>(BoundRelation{std::move(node), std::move(columns)});
 }
 
 class Binder {
@@ -213,6 +202,7 @@ private:
         std::set<std::string> seen;
         for (std::size_t i = 0; i < s.query.items.size(); ++i) {
             const auto& item = s.query.items[i];
+            if (!item.expr) continue;  // t.*: plain columns
             if (item.alias.empty() && !std::holds_alternative<ast::ColumnRef>(item.expr->node)) {
                 return makeError(ErrorCode::SyntaxError,
                                  "view '" + s.name + "': column " + std::to_string(i + 1) + " (" +
@@ -225,7 +215,9 @@ private:
                                  "view '" + s.name + "': duplicate column name '" + name + "'");
             }
         }
-        return BoundStatement{BoundCreateView{ViewDef{s.name, s.queryText}, s.query.table}};
+        std::vector<std::string> sources{s.query.from.name};
+        for (const auto& j : s.query.joins) sources.push_back(j.table.name);
+        return BoundStatement{BoundCreateView{ViewDef{s.name, s.queryText}, std::move(sources)}};
     }
 
     Result<BoundStatement> bindStatement(const ast::DropView& s) {
@@ -261,8 +253,8 @@ private:
 
     Result<BoundStatement> bindStatement(const ast::Insert& s) {
         LEDGER_TRY(table, writableTable(s.table));
-        const std::vector<Slot> slots = tableSlots(*table);
-        const Scope scope{&slots, table->name, false};
+        const std::vector<RelColumn> columns = tableColumns(*table, table->name);
+        const Scope scope{&columns, table->name, false, false};
 
         // Target columns: the explicit list, or the whole schema in order.
         std::vector<std::size_t> targets;
@@ -271,7 +263,7 @@ private:
         } else {
             std::set<std::size_t> seen;
             for (const auto& name : s.columns) {
-                LEDGER_TRY(idx, resolveColumn(scope, name));
+                LEDGER_TRY(idx, scope.resolve(name));
                 if (!seen.insert(idx).second) {
                     return makeError(ErrorCode::SyntaxError, "duplicate column '" + name + "'");
                 }
@@ -308,24 +300,21 @@ private:
     }
 
     Result<BoundStatement> bindStatement(const ast::Select& s) {
-        LEDGER_TRY(src, resolveSource(s.table, 0));
-        const Scope scope{&src.slots, src.name, src.isView};
+        LEDGER_TRY(relation, fromClause(s, 0));
+        const Scope scope{&relation->columns, s.from.alias, catalog_.findView(s.from.name) != nullptr,
+                          !s.joins.empty()};
 
         BoundSelect out;
-        out.table = src.table;
         out.limit = s.limit;
 
-        // WHERE = every view filter AND the query's own filter. Never
-        // aggregated: it runs before grouping.
+        // WHERE runs on the relation's rows, before any grouping.
         LEDGER_TRY(where, bindWhere(s.where, scope));
-        std::vector<BoundExprPtr> filters = std::move(src.filters);
-        if (where) filters.push_back(std::move(where));
-        out.where = conjunction(std::move(filters));
+        out.where = std::move(where);
 
         // Aggregated as soon as GROUP BY is present or an aggregate appears in
         // the projection, HAVING or ORDER BY.
         bool aggregated = !s.groupBy.empty() || (s.having != nullptr);
-        for (const auto& item : s.items) aggregated = aggregated || containsAggregate(*item.expr);
+        for (const auto& item : s.items) aggregated = aggregated || (item.expr && containsAggregate(*item.expr));
         for (const auto& ob : s.orderBy) aggregated = aggregated || containsAggregate(*ob.expr);
 
         GroupContext group{{}, {}, &scope, {}, {}};
@@ -348,12 +337,28 @@ private:
         }
 
         if (s.star) {
-            for (const auto& slot : src.slots) {
-                out.columnNames.push_back(slot.name);
-                out.projection.push_back(cloneExpr(*slot.expr));
+            for (std::size_t i = 0; i < relation->columns.size(); ++i) {
+                out.columnNames.push_back(relation->columns[i].name);
+                out.projection.push_back(make(BoundColumn{i}, relation->columns[i].type));
             }
         } else {
             for (const auto& item : s.items) {
+                if (!item.expr) {
+                    // t.*: every column of that source.
+                    if (aggregated) {
+                        return makeError(ErrorCode::SyntaxError,
+                                         item.starOf + ".* cannot be used with GROUP BY or aggregate functions");
+                    }
+                    bool any = false;
+                    for (std::size_t i = 0; i < relation->columns.size(); ++i) {
+                        if (relation->columns[i].qualifier != item.starOf) continue;
+                        any = true;
+                        out.columnNames.push_back(relation->columns[i].name);
+                        out.projection.push_back(make(BoundColumn{i}, relation->columns[i].type));
+                    }
+                    if (!any) return makeError(ErrorCode::NotFound, "unknown table alias '" + item.starOf + "'");
+                    continue;
+                }
                 LEDGER_TRY(e, bindExpr(*item.expr, &scope, g));
                 out.columnNames.push_back(itemName(item));
                 out.projection.push_back(std::move(e));
@@ -373,7 +378,7 @@ private:
         // (so a hidden column can still order the result).
         for (const auto& ob : s.orderBy) {
             BoundExprPtr key;
-            if (const auto* c = std::get_if<ast::ColumnRef>(&ob.expr->node)) {
+            if (const auto* c = std::get_if<ast::ColumnRef>(&ob.expr->node); c && c->qualifier.empty()) {
                 for (std::size_t i = 0; i < out.columnNames.size() && !key; ++i) {
                     if (out.columnNames[i] == c->name) key = cloneExpr(*out.projection[i]);
                 }
@@ -385,6 +390,7 @@ private:
             out.orderBy.push_back(BoundOrderBy{std::move(key), ob.descending});
         }
 
+        out.relation = std::move(relation);
         out.aggregated = aggregated;
         out.aggregates = std::move(group.aggregates);
         return BoundStatement{std::move(out)};
@@ -392,13 +398,13 @@ private:
 
     Result<BoundStatement> bindStatement(const ast::Update& s) {
         LEDGER_TRY(table, writableTable(s.table));
-        const std::vector<Slot> slots = tableSlots(*table);
-        const Scope scope{&slots, table->name, false};
+        const std::vector<RelColumn> columns = tableColumns(*table, table->name);
+        const Scope scope{&columns, table->name, false, false};
 
         BoundUpdate out{table, {}, nullptr};
         std::set<std::size_t> seen;
         for (const auto& [name, expr] : s.assignments) {
-            LEDGER_TRY(idx, resolveColumn(scope, name));
+            LEDGER_TRY(idx, scope.resolve(name));
             if (!seen.insert(idx).second) {
                 return makeError(ErrorCode::SyntaxError, "column '" + name + "' assigned twice");
             }
@@ -413,88 +419,120 @@ private:
 
     Result<BoundStatement> bindStatement(const ast::Delete& s) {
         LEDGER_TRY(table, writableTable(s.table));
-        const std::vector<Slot> slots = tableSlots(*table);
-        const Scope scope{&slots, table->name, false};
+        const std::vector<RelColumn> columns = tableColumns(*table, table->name);
+        const Scope scope{&columns, table->name, false, false};
         LEDGER_TRY(where, bindWhere(s.where, scope));
         return BoundStatement{BoundDelete{table, std::move(where)}};
     }
 
-    // ---- views -------------------------------------------------------------
+    // ---- relations ---------------------------------------------------------
 
-    // Resolves a FROM name through any number of views down to a table.
-    Result<Source> resolveSource(const std::string& name, int depth) {
-        if (const TableSchema* t = catalog_.find(name)) {
-            return Source{t, tableSlots(*t), {}, name, false};
+    // One FROM/JOIN entry: a table scan, or a view expanded into its own
+    // relation, with every column qualified by the entry's alias.
+    Result<BoundRelationPtr> relationFor(const ast::TableRef& ref, int depth) {
+        if (const TableSchema* t = catalog_.find(ref.name)) {
+            return makeRelation(RelScan{t}, tableColumns(*t, ref.alias));
         }
-        const ViewEntry* view = catalog_.findView(name);
-        if (!view) return notFoundTable(name);
+        const ViewEntry* view = catalog_.findView(ref.name);
+        if (!view) return makeError(ErrorCode::NotFound, "unknown table or view '" + ref.name + "'");
         if (depth >= kMaxViewDepth) {
-            return makeError(ErrorCode::Corruption, "view '" + name + "': nesting too deep");
+            return makeError(ErrorCode::Corruption, "view '" + ref.name + "': nesting too deep");
         }
 
         auto parsed = parse(view->def.sql);
-        if (!parsed.ok()) return inView(name, parsed.error());
+        if (!parsed.ok()) return inView(ref.name, parsed.error());
         const auto* query = std::get_if<ast::Select>(&parsed.value());
         if (!query) {
-            return makeError(ErrorCode::Corruption, "view '" + name + "': definition is not a SELECT");
+            return makeError(ErrorCode::Corruption, "view '" + ref.name + "': definition is not a SELECT");
+        }
+        if (!query->groupBy.empty() || query->having) {
+            return makeError(ErrorCode::Corruption, "view '" + ref.name + "': definition aggregates");
         }
 
-        auto inner = resolveSource(query->table, depth + 1);
-        if (!inner.ok()) return inView(name, inner.error());
-        Source& base = inner.value();
-        const Scope innerScope{&base.slots, base.name, base.isView};
+        auto rel = viewRelation(*query, depth + 1);
+        if (!rel.ok()) return inView(ref.name, rel.error());
+        for (auto& col : rel.value()->columns) col.qualifier = ref.alias;
+        return std::move(rel).value();
+    }
 
-        Source out{base.table, {}, std::move(base.filters), name, true};
-        if (query->star) {
-            for (const auto& slot : base.slots) {
-                out.slots.push_back(Slot{slot.name, slot.type, cloneExpr(*slot.expr)});
+    // FROM tableRef {JOIN tableRef ON expr}: scans / views combined by joins.
+    Result<BoundRelationPtr> fromClause(const ast::Select& s, int depth) {
+        std::set<std::string> aliases{s.from.alias};
+        LEDGER_TRY(rel, relationFor(s.from, depth));
+        for (const auto& j : s.joins) {
+            if (!aliases.insert(j.table.alias).second) {
+                return makeError(ErrorCode::SyntaxError, "duplicate table alias '" + j.table.alias + "'");
             }
+            LEDGER_TRY(right, relationFor(j.table, depth));
+            std::vector<RelColumn> columns = rel->columns;
+            columns.insert(columns.end(), right->columns.begin(), right->columns.end());
+            const Scope scope{&columns, {}, false, true};
+            LEDGER_TRY(on, bindExpr(*j.on, &scope));
+            if (on->type != DataType::Bool && on->type != DataType::Null) {
+                return errorAt(*j.on, ErrorCode::TypeError, "ON must be BOOL, got " + typeName(on->type));
+            }
+            if (containsAggregate(*j.on)) {
+                return errorAt(*j.on, ErrorCode::SyntaxError, "aggregate functions are not allowed in ON");
+            }
+            const JoinKind kind = j.kind == ast::JoinKind::Left ? JoinKind::Left : JoinKind::Inner;
+            rel = makeRelation(RelJoin{kind, std::move(rel), std::move(right), std::move(on)},
+                               std::move(columns));
+        }
+        return rel;
+    }
+
+    // A view's body as a relation: FROM/JOINs, then WHERE, then its projection.
+    Result<BoundRelationPtr> viewRelation(const ast::Select& q, int depth) {
+        LEDGER_TRY(rel, fromClause(q, depth));
+        const Scope scope{&rel->columns, q.from.alias, catalog_.findView(q.from.name) != nullptr,
+                          !q.joins.empty()};
+        LEDGER_TRY(where, bindWhere(q.where, scope));
+        if (where) {
+            std::vector<RelColumn> columns = rel->columns;
+            rel = makeRelation(RelFilter{std::move(rel), std::move(where)}, std::move(columns));
+        }
+        // Re-bind against the filtered relation (same layout).
+        const Scope filtered{&rel->columns, q.from.alias, false, !q.joins.empty()};
+        std::vector<BoundExprPtr> exprs;
+        std::vector<RelColumn> columns;
+        auto addColumn = [&](std::size_t i) {
+            columns.push_back(RelColumn{{}, rel->columns[i].name, rel->columns[i].type});
+            exprs.push_back(make(BoundColumn{i}, rel->columns[i].type));
+        };
+        if (q.star) {
+            for (std::size_t i = 0; i < rel->columns.size(); ++i) addColumn(i);
         } else {
-            for (const auto& item : query->items) {
-                auto e = bindExpr(*item.expr, &innerScope);
-                if (!e.ok()) return inView(name, e.error());
-                const DataType type = e.value()->type;
-                out.slots.push_back(Slot{itemName(item), type, std::move(e).value()});
+            for (const auto& item : q.items) {
+                if (!item.expr) {
+                    bool any = false;
+                    for (std::size_t i = 0; i < rel->columns.size(); ++i) {
+                        if (rel->columns[i].qualifier == item.starOf) {
+                            addColumn(i);
+                            any = true;
+                        }
+                    }
+                    if (!any) return makeError(ErrorCode::NotFound, "unknown table alias '" + item.starOf + "'");
+                    continue;
+                }
+                LEDGER_TRY(e, bindExpr(*item.expr, &filtered));
+                columns.push_back(RelColumn{{}, itemName(item), e->type});
+                exprs.push_back(std::move(e));
             }
         }
-        if (query->where) {
-            auto filter = bindWhere(query->where, innerScope);
-            if (!filter.ok()) return inView(name, filter.error());
-            out.filters.push_back(std::move(filter).value());
-        }
-        return out;
+        return makeRelation(RelProject{std::move(rel), std::move(exprs)}, std::move(columns));
     }
 
     static Error inView(const std::string& view, const Error& e) {
         return makeError(e.code, "in view '" + view + "': " + e.message);
     }
 
-    // AND of every filter; nullptr when there is none.
-    static BoundExprPtr conjunction(std::vector<BoundExprPtr> filters) {
-        BoundExprPtr acc;
-        for (auto& f : filters) {
-            if (!acc) {
-                acc = std::move(f);
-                continue;
-            }
-            const DataType type = (acc->type == DataType::Null && f->type == DataType::Null)
-                                      ? DataType::Null
-                                      : DataType::Bool;
-            acc = make(BoundBinary{BinaryOp::And, std::move(acc), std::move(f)}, type);
-        }
-        return acc;
-    }
-
     // ---- helpers -----------------------------------------------------------
-
-    // Position of a column in a table scope (= its index in the row).
-    static Result<std::size_t> resolveColumn(const Scope& scope, const std::string& name) {
-        if (auto idx = scope.position(name)) return *idx;
-        return scope.unknownColumn(name);
-    }
 
     Result<BoundExprPtr> bindWhere(const ast::ExprPtr& where, const Scope& scope) {
         if (!where) return BoundExprPtr{};
+        if (containsAggregate(*where)) {
+            return errorAt(*where, ErrorCode::SyntaxError, "aggregate functions are not allowed in WHERE");
+        }
         LEDGER_TRY(e, bindExpr(*where, &scope));
         if (e->type != DataType::Bool && e->type != DataType::Null) {
             return errorAt(*where, ErrorCode::TypeError,
@@ -584,21 +622,19 @@ private:
 
     Result<BoundExprPtr> bindColumn(const ast::Expr& e, const ast::ColumnRef& c, const Scope* scope,
                                     const GroupContext* group) {
+        const std::string shown = c.qualifier.empty() ? c.name : c.qualifier + "." + c.name;
         if (!scope) {
             return errorAt(e, ErrorCode::SyntaxError,
-                           "column reference '" + c.name + "' is not allowed here");
+                           "column reference '" + shown + "' is not allowed here");
         }
-        const Slot* slot = scope->resolve(c.name);
-        if (!slot) {
-            const Error err = scope->unknownColumn(c.name);
-            return errorAt(e, err.code, err.message);
-        }
+        auto idx = scope->resolve(c);
+        if (!idx.ok()) return errorAt(e, idx.error().code, idx.error().message);
         if (group) {
             return errorAt(e, ErrorCode::SyntaxError,
-                           "column '" + c.name +
+                           "column '" + shown +
                                "' must appear in GROUP BY or be used in an aggregate function");
         }
-        return cloneExpr(*slot->expr);
+        return make(BoundColumn{idx.value()}, (*scope->columns)[idx.value()].type);
     }
 
     // Aggregate arguments read source rows through the group's source scope;

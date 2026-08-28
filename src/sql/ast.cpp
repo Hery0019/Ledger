@@ -76,6 +76,10 @@ void render(const Expr& e, std::string& out, int parentPrecedence) {
                     out += n.value.toText();
                 }
             } else if constexpr (std::is_same_v<N, ColumnRef>) {
+                if (!n.qualifier.empty()) {
+                    out += n.qualifier;
+                    out += '.';
+                }
                 out += n.name;
             } else if constexpr (std::is_same_v<N, Unary>) {
                 out += unaryOpName(n.op);
