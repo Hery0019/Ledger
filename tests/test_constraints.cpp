@@ -87,6 +87,67 @@ TEST_CASE("DEFAULT errors at CREATE TABLE") {
           "1:31: aggregate function 'count()' is not allowed here");
 }
 
+// ---- UNIQUE ----------------------------------------------------------------
+
+TEST_CASE("UNIQUE refuses duplicate non-NULL values on INSERT and UPDATE, allows NULLs") {
+    Db db;
+    db.run("CREATE TABLE u (id INT PRIMARY KEY, email TEXT UNIQUE, code INT UNIQUE NOT NULL DEFAULT 0)");
+    db.run("INSERT INTO u VALUES (1, 'a@x', 1)");
+    db.run("INSERT INTO u VALUES (2, 'b@x', 2)");
+    db.run("INSERT INTO u VALUES (3, NULL, 3)");
+    db.run("INSERT INTO u VALUES (4, NULL, 4)");  // several NULLs are fine
+    auto e = db.fail("INSERT INTO u VALUES (5, 'a@x', 5)");
+    CHECK(e.code == ErrorCode::ConstraintViolation);
+    CHECK(e.message == "duplicate value a@x for UNIQUE column 'email' in table 'u'");
+    CHECK(db.fail("INSERT INTO u VALUES (5, 'c@x', 2)").message ==
+          "duplicate value 2 for UNIQUE column 'code' in table 'u'");
+    db.run("INSERT INTO u (id, email) VALUES (5, 'c@x')");  // code takes DEFAULT 0
+    CHECK(db.fail("INSERT INTO u (id, email) VALUES (6, 'd@x')").message ==
+          "duplicate value 0 for UNIQUE column 'code' in table 'u'");  // the DEFAULT collides too
+    CHECK(db.rows("SELECT * FROM u").size() == 5);
+
+    // UPDATE: against other rows, against rows modified in the same statement,
+    // and a row keeping its own value is fine.
+    db.run("UPDATE u SET email = 'a@x' WHERE id = 1");
+    CHECK(db.fail("UPDATE u SET email = 'a@x' WHERE id = 2").message ==
+          "duplicate value a@x for UNIQUE column 'email' in table 'u'");
+    CHECK(db.fail("UPDATE u SET code = 9 WHERE id > 2").message ==
+          "duplicate value 9 for UNIQUE column 'code' in table 'u'");
+    db.run("UPDATE u SET email = NULL WHERE id IN (1, 2)");  // NULLs never collide
+    db.run("UPDATE u SET code = code + 10");                 // all distinct, all move at once
+    CHECK(db.rows("SELECT * FROM u WHERE code = 11").size() == 1);
+    CHECK(db.catalog.find("u")->columns[1].unique);
+}
+
+TEST_CASE("UNIQUE columns are indexed: point lookups and reopen") {
+    Db db;
+    db.run("CREATE TABLE u (id INT PRIMARY KEY, email TEXT UNIQUE)");
+    db.run("INSERT INTO u VALUES (1, 'a@x')");
+    CHECK(db.engine.indexed("u", 1));
+    CHECK(db.engine.lookup("u", 1, t("a@x")).value()->first == 1);
+    CHECK(db.rows("SELECT id FROM u WHERE email = 'a@x'")[0] == Row{i(1)});
+    CHECK(db.rows("SELECT id FROM u WHERE 'zz' = email").empty());
+
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "ledger_test_unique";
+    fs::remove_all(dir);
+    {
+        auto d = Database::open(dir).value();
+        REQUIRE(d->execute("CREATE TABLE u (id INT PRIMARY KEY, email TEXT UNIQUE)").ok());
+        REQUIRE(d->execute("INSERT INTO u VALUES (1, 'a@x')").ok());
+    }
+    {
+        auto d = Database::open(dir).value();
+        CHECK(d->catalog().find("u")->columns[1].unique);
+        CHECK(d->execute("INSERT INTO u VALUES (2, 'a@x')").error().code == ErrorCode::ConstraintViolation);
+        REQUIRE(d->execute("INSERT INTO u VALUES (2, 'b@x')").ok());
+    }
+    fs::remove_all(dir);
+    CHECK(codec::encodeSchema(TableSchema{"u", {ColumnSchema{"e", DataType::Text, false, true, std::nullopt, true}}}) ==
+          "ledger-schema 1\ne TEXT NN UQ\n");
+    CHECK(db.fail("CREATE TABLE v (a INT UNIQUE UNIQUE)").message == "1:30: expected a single UNIQUE constraint, got 'UNIQUE'");
+}
+
 TEST_CASE("DEFAULT is persisted in schema.txt and survives reopen") {
     using namespace ledger::codec;
     TableSchema s{"t", {ColumnSchema{"a", DataType::Text, false, false, t("two words\tand\\tab")},

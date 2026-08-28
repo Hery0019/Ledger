@@ -13,7 +13,7 @@
 //
 // schema.txt:
 //   ledger-schema 1
-//   <column> <TYPE> [PK] [NN] [DEF:<value> | DEFNULL]
+//   <column> <TYPE> [PK] [NN] [UQ] [DEF:<value> | DEFNULL]
 //     PK implies NN, which is then not written. Attributes carrying a payload
 //     use `KEY:<payload>` with the payload escaped like a text field plus
 //     `\s` for spaces (escapeAttr), so a line stays space-separated.

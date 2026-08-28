@@ -56,29 +56,41 @@ private:
 
 }  // namespace
 
-// ---- PkIndex ---------------------------------------------------------------
+// ---- ColumnIndex / TableIndexes --------------------------------------------
 
-TEST_CASE("PkIndex tracks add, replace and remove; no index without a PRIMARY KEY") {
-    PkIndex idx(schema());
-    CHECK(idx.column() == 0);
+TEST_CASE("TableIndexes tracks add, replace and remove; no index without a PRIMARY KEY or UNIQUE") {
+    TableIndexes idx(schema());
+    REQUIRE(idx.has(0));
+    CHECK_FALSE(idx.has(1));
     idx.add(10, row(1, "a"));
     idx.add(11, row(2, "b"));
-    CHECK(idx.find(i(1)) == 10);
-    CHECK(idx.find(i(2)) == 11);
-    CHECK_FALSE(idx.find(i(3)).has_value());
-    CHECK_FALSE(idx.find(Value::null()).has_value());
+    CHECK(idx.on(0)->find(i(1)) == 10);
+    CHECK(idx.on(0)->find(i(2)) == 11);
+    CHECK_FALSE(idx.on(0)->find(i(3)).has_value());
+    CHECK_FALSE(idx.on(0)->find(Value::null()).has_value());
+    CHECK(idx.on(0)->maxKey() == i(2));
     idx.replace(10, row(1, "a"), row(5, "a"));  // key changed
-    CHECK_FALSE(idx.find(i(1)).has_value());
-    CHECK(idx.find(i(5)) == 10);
+    CHECK_FALSE(idx.on(0)->find(i(1)).has_value());
+    CHECK(idx.on(0)->find(i(5)) == 10);
     idx.remove(row(2, "b"));
-    CHECK_FALSE(idx.find(i(2)).has_value());
+    CHECK_FALSE(idx.on(0)->find(i(2)).has_value());
     // Int key looked up with a Float value: numeric comparison.
-    CHECK(idx.find(Value::real(5.0).value()) == 10);
+    CHECK(idx.on(0)->find(Value::real(5.0).value()) == 10);
 
-    PkIndex none(TableSchema{"u", {ColumnSchema{"a", DataType::Int, false, false}}});
-    CHECK_FALSE(none.column().has_value());
+    TableIndexes none(TableSchema{"u", {ColumnSchema{"a", DataType::Int, false, false}}});
+    CHECK_FALSE(none.has(0));
     none.add(1, Row{i(1)});
-    CHECK_FALSE(none.find(i(1)).has_value());
+    CHECK(none.on(0) == nullptr);
+
+    // A UNIQUE column is indexed too, and NULL keys are skipped.
+    TableIndexes uq(TableSchema{"v", {ColumnSchema{"a", DataType::Int, true, true},
+                                       ColumnSchema{"e", DataType::Text, false, false, std::nullopt, true}}});
+    REQUIRE(uq.has(1));
+    uq.add(1, Row{i(1), Value::text("x")});
+    uq.add(2, Row{i(2), Value::null()});
+    CHECK(uq.on(1)->find(Value::text("x")) == 1);
+    CHECK(uq.on(0)->find(i(2)) == 2);
+    CHECK_FALSE(uq.on(1)->maxKey() == Value::null());
 }
 
 // ---- engines ---------------------------------------------------------------

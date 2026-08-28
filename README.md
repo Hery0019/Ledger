@@ -9,7 +9,7 @@ meant for personal use afterwards.
 
 - `CREATE TABLE` / `DROP TABLE` — types `INT`, `FLOAT`, `TEXT`, `BOOL`;
   column constraints `PRIMARY KEY` (one per table, implies `NOT NULL`),
-  `NOT NULL`, `DEFAULT <constant>`.
+  `NOT NULL`, `DEFAULT <constant>`, `UNIQUE` (NULLs never collide).
 - `INSERT INTO t [(cols)] VALUES (...)` — one row per statement.
 - `SELECT * | t.* | expr [AS alias], ... FROM t [AS a] [[INNER|LEFT] JOIN u [AS b] ON expr ...]
   [WHERE expr] [GROUP BY expr, ...] [HAVING expr] [ORDER BY expr [ASC|DESC], ...]
@@ -36,7 +36,7 @@ meant for personal use afterwards.
   logged; `ROLLBACK` undoes them in reverse order. Atomic within the process,
   not across a crash. `CREATE` / `DROP` are refused inside a transaction; a
   session closing mid-transaction rolls it back.
-- Every `PRIMARY KEY` has an in-memory index (rebuilt when a table is loaded):
+- Every `PRIMARY KEY` and `UNIQUE` column has an in-memory index (rebuilt when a table is loaded):
   key uniqueness and `WHERE pk = value` on a table are answered without a
   scan. No user-defined indexes.
 - No correlated subqueries.
@@ -123,7 +123,7 @@ data/mydb/
   LOCK                 present while a process has the database open
   views.txt            ledger-views 1   then  <view>\t<escaped SELECT>, one per line
   users/
-    schema.txt         ledger-schema 1  then  <column> <TYPE> [PK|NN]
+    schema.txt         ledger-schema 1  then  <column> <TYPE> [PK] [NN] [UQ] [DEF:<value>|DEFNULL]
     rows.txt           ledger-rows 1    then  I <rowid>\t<fields>  or  D <rowid>
 ```
 
