@@ -248,7 +248,24 @@ struct Begin {};
 struct Commit {};
 struct Rollback {};
 
+// CREATE USER name PASSWORD 'secret' / ALTER USER name PASSWORD 'new' /
+// DROP USER name. Accounts gate the HTTP server (ledgerd); the password is
+// hashed by the executor and never stored in clear.
+struct CreateUser {
+    std::string name;      // folded, like every identifier
+    std::string password;  // as written; non-empty (checked by the parser)
+};
+
+struct AlterUser {
+    std::string name;
+    std::string password;
+};
+
+struct DropUser {
+    std::string name;
+};
+
 using Statement = std::variant<CreateTable, DropTable, CreateView, DropView, Insert, Select, Update,
-                               Delete, Begin, Commit, Rollback>;
+                               Delete, Begin, Commit, Rollback, CreateUser, AlterUser, DropUser>;
 
 }  // namespace ledger::ast

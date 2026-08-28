@@ -52,7 +52,7 @@ Executor::~Executor() {
 Result<void> Executor::noDdlInTransaction() const {
     if (!undo_) return {};
     return makeError(ErrorCode::SyntaxError,
-                     "CREATE and DROP are not transactional; COMMIT or ROLLBACK first");
+                     "CREATE, DROP and ALTER are not transactional; COMMIT or ROLLBACK first");
 }
 
 Result<QueryResult> Executor::run(const BoundBegin&) {
@@ -153,6 +153,51 @@ Result<QueryResult> Executor::run(const BoundDropView& s) {
     auto saved = engine_.saveViews(catalog_.views());
     if (!saved.ok()) {
         (void)catalog_.addView(backup.def, backup.sources);
+        return saved.error();
+    }
+    return QueryResult{};
+}
+
+// ---- users -----------------------------------------------------------------
+//
+// Same shape as views: the catalog first, then the whole list to the engine,
+// catalog rolled back if the save fails. The password is hashed here — the
+// engine and the files only ever see the salted hash.
+
+Result<QueryResult> Executor::run(const BoundCreateUser& s) {
+    LEDGER_TRY_VOID(noDdlInTransaction());
+    LEDGER_TRY_VOID(catalog_.addUser(makeUser(s.name, s.password)));
+    auto saved = engine_.saveUsers(catalog_.users());
+    if (!saved.ok()) {
+        (void)catalog_.removeUser(s.name);
+        return saved.error();
+    }
+    return QueryResult{};
+}
+
+Result<QueryResult> Executor::run(const BoundAlterUser& s) {
+    LEDGER_TRY_VOID(noDdlInTransaction());
+    const UserDef* existing = catalog_.findUser(s.name);
+    if (!existing) return makeError(ErrorCode::NotFound, "unknown user '" + s.name + "'");
+    const UserDef backup = *existing;
+    LEDGER_TRY_VOID(catalog_.replaceUser(makeUser(s.name, s.password)));
+    auto saved = engine_.saveUsers(catalog_.users());
+    if (!saved.ok()) {
+        (void)catalog_.replaceUser(backup);
+        return saved.error();
+    }
+    return QueryResult{};
+}
+
+Result<QueryResult> Executor::run(const BoundDropUser& s) {
+    LEDGER_TRY_VOID(noDdlInTransaction());
+    const UserDef* existing = catalog_.findUser(s.name);
+    if (!existing) return makeError(ErrorCode::NotFound, "unknown user '" + s.name + "'");
+    const UserDef backup = *existing;
+    LEDGER_TRY_VOID(catalog_.removeUser(s.name));
+    auto saved = engine_.saveUsers(catalog_.users());
+    if (!saved.ok()) {
+        (void)catalog_.addUser(backup);
         return saved.error();
     }
     return QueryResult{};

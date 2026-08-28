@@ -125,4 +125,11 @@ Result<void> MemoryEngine::saveViews(const std::vector<ViewDef>& views) {
 
 Result<std::vector<ViewDef>> MemoryEngine::loadViews() { return views_; }
 
+Result<void> MemoryEngine::saveUsers(const std::vector<UserDef>& users) {
+    users_ = users;
+    return {};
+}
+
+Result<std::vector<UserDef>> MemoryEngine::loadUsers() { return users_; }
+
 }  // namespace ledger

@@ -100,8 +100,8 @@ TEST_CASE("parse DROP VIEW and CREATE/DROP errors") {
           "view 'v': ORDER BY, LIMIT and OFFSET are not allowed in a view");
     CHECK(e("CREATE VIEW v SELECT * FROM t") == "1:15: expected 'AS', got 'SELECT'");
     CHECK(e("CREATE VIEW v AS INSERT INTO t VALUES (1)") == "1:18: expected SELECT after AS, got 'INSERT'");
-    CHECK(e("CREATE INDEX i") == "1:8: expected 'TABLE' or 'VIEW', got identifier 'index'");
-    CHECK(e("DROP v") == "1:6: expected 'TABLE' or 'VIEW', got identifier 'v'");
+    CHECK(e("CREATE INDEX i") == "1:8: expected 'TABLE', 'VIEW' or 'USER', got identifier 'index'");
+    CHECK(e("DROP v") == "1:6: expected 'TABLE', 'VIEW' or 'USER', got identifier 'v'");
     CHECK(e("CREATE VIEW AS SELECT * FROM t") == "1:13: expected identifier, got 'AS'");
 }
 

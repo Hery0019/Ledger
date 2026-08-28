@@ -385,6 +385,27 @@ private:
     Result<BoundStatement> bindStatement(const ast::Commit&) { return BoundStatement{BoundCommit{}}; }
     Result<BoundStatement> bindStatement(const ast::Rollback&) { return BoundStatement{BoundRollback{}}; }
 
+    // Users live in their own namespace (they are not tables); the only
+    // semantic check is existence.
+    Result<BoundStatement> bindStatement(const ast::CreateUser& s) {
+        if (catalog_.findUser(s.name)) {
+            return makeError(ErrorCode::AlreadyExists, "user '" + s.name + "' already exists");
+        }
+        return BoundStatement{BoundCreateUser{s.name, s.password}};
+    }
+    Result<BoundStatement> bindStatement(const ast::AlterUser& s) {
+        if (!catalog_.findUser(s.name)) {
+            return makeError(ErrorCode::NotFound, "unknown user '" + s.name + "'");
+        }
+        return BoundStatement{BoundAlterUser{s.name, s.password}};
+    }
+    Result<BoundStatement> bindStatement(const ast::DropUser& s) {
+        if (!catalog_.findUser(s.name)) {
+            return makeError(ErrorCode::NotFound, "unknown user '" + s.name + "'");
+        }
+        return BoundStatement{BoundDropUser{s.name}};
+    }
+
     Result<void> checkNoDependents(const std::string& name, const char* what) const {
         const auto deps = catalog_.dependents(name);
         if (deps.empty()) return {};

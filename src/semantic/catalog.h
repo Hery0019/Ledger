@@ -7,6 +7,7 @@
 #include <string_view>
 #include <vector>
 
+#include "core/password.h"
 #include "core/result.h"
 #include "core/schema.h"
 
@@ -65,10 +66,27 @@ public:
         return contains(name) || findView(name) != nullptr;
     }
 
+    // ---- users ---------------------------------------------------------------
+    //
+    // Accounts gate the HTTP server; they live in their own namespace (a user
+    // and a table may share a name). Pointers returned by findUser() are
+    // invalidated by any user change.
+
+    [[nodiscard]] const UserDef* findUser(std::string_view name) const noexcept;
+
+    Result<void> addUser(UserDef user);              // AlreadyExists
+    Result<void> replaceUser(UserDef user);          // NotFound (ALTER USER)
+    Result<void> removeUser(std::string_view name);  // NotFound
+
+    [[nodiscard]] std::vector<UserDef> users() const;              // sorted by name
+    [[nodiscard]] std::vector<std::string_view> userNames() const; // sorted
+    [[nodiscard]] bool hasUsers() const noexcept { return !users_.empty(); }
+
 private:
     // std::less<>: find() by string_view without building a std::string.
     std::map<std::string, TableSchema, std::less<>> tables_;
     std::vector<ViewEntry> views_;
+    std::map<std::string, UserDef, std::less<>> users_;
 };
 
 }  // namespace ledger

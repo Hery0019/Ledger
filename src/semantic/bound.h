@@ -273,8 +273,25 @@ struct BoundBegin {};
 struct BoundCommit {};
 struct BoundRollback {};
 
+// User statements carry the plain password up to the executor, which hashes
+// it (semantic checks need the catalog only; hashing is an effect).
+struct BoundCreateUser {
+    std::string name;
+    std::string password;
+};
+
+struct BoundAlterUser {
+    std::string name;
+    std::string password;
+};
+
+struct BoundDropUser {
+    std::string name;
+};
+
 using BoundStatement = std::variant<BoundCreateTable, BoundDropTable, BoundCreateView,
                                     BoundDropView, BoundInsert, BoundSelect, BoundUpdate,
-                                    BoundDelete, BoundBegin, BoundCommit, BoundRollback>;
+                                    BoundDelete, BoundBegin, BoundCommit, BoundRollback,
+                                    BoundCreateUser, BoundAlterUser, BoundDropUser>;
 
 }  // namespace ledger

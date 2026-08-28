@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cerrno>
+#include <charconv>
 #include <cstring>
 #include <fstream>
 #include <sstream>
@@ -29,6 +30,8 @@ constexpr std::string_view kSchemaFile = "schema.txt";
 constexpr std::string_view kRowsFile = "rows.txt";
 constexpr std::string_view kViewsFile = "views.txt";
 constexpr std::string_view kViewsHeader = "ledger-views 1";
+constexpr std::string_view kUsersFile = "users.txt";
+constexpr std::string_view kUsersHeader = "ledger-users 1";
 
 Error ioError(const std::string& what, const fs::path& path) {
     return makeError(ErrorCode::IoError, what + ": " + path.string() + " (" + std::strerror(errno) + ")");
@@ -244,6 +247,89 @@ Result<std::vector<ViewDef>> FileEngine::loadViews() {
         auto sql = codec::unescapeText(line.substr(tab + 1));
         if (!sql.ok()) return makeError(ErrorCode::Corruption, where + sql.error().message);
         out.push_back(ViewDef{std::string(line.substr(0, tab)), std::move(sql).value()});
+    }
+    return out;
+}
+
+// ---- users -----------------------------------------------------------------
+//
+// users.txt: `ledger-users 1` then <name>\t<salt-hex>\t<hash-hex>\t<iterations>
+// per line. No escaping needed: names are identifiers, the rest is hex and
+// digits. Only the salted hashes are stored, never a password.
+
+Result<void> FileEngine::saveUsers(const std::vector<UserDef>& users) {
+    const std::lock_guard<std::mutex> lock(mu_);
+    std::string content(kUsersHeader);
+    content += '\n';
+    for (const auto& u : users) {
+        content += u.name;
+        content += '\t';
+        content += u.saltHex;
+        content += '\t';
+        content += u.hashHex;
+        content += '\t';
+        content += std::to_string(u.iterations);
+        content += '\n';
+    }
+    // Written whole through a temporary file: a crash never leaves a
+    // half-written list.
+    const fs::path path = dir_ / kUsersFile;
+    const fs::path tmp = dir_ / "users.txt.tmp";
+    LEDGER_TRY_VOID(writeWholeFile(tmp, content));
+    std::error_code ec;
+    fs::rename(tmp, path, ec);
+    if (ec) return ioError("cannot replace users file", path, ec);
+    return {};
+}
+
+Result<std::vector<UserDef>> FileEngine::loadUsers() {
+    const std::lock_guard<std::mutex> lock(mu_);
+    const fs::path path = dir_ / kUsersFile;
+    std::vector<UserDef> out;
+    std::error_code ec;
+    if (!fs::exists(path, ec)) return out;  // no user yet: an open database
+    LEDGER_TRY(content, readWholeFile(path));
+
+    std::string_view rest = content;
+    std::size_t lineNo = 0;
+    bool headerSeen = false;
+    while (!rest.empty()) {
+        const std::size_t nl = rest.find('\n');
+        const std::string_view line = rest.substr(0, nl);
+        rest = nl == std::string_view::npos ? std::string_view{} : rest.substr(nl + 1);
+        ++lineNo;
+        const std::string where = path.string() + ":" + std::to_string(lineNo) + ": ";
+        if (!headerSeen) {
+            if (line != kUsersHeader) {
+                return makeError(ErrorCode::Corruption, where + "missing or unknown header (expected '" +
+                                                            std::string(kUsersHeader) + "')");
+            }
+            headerSeen = true;
+            continue;
+        }
+        if (line.empty()) continue;
+        UserDef user;
+        std::string_view fields = line;
+        std::string* const parts[3] = {&user.name, &user.saltHex, &user.hashHex};
+        bool malformed = false;
+        for (auto* part : parts) {
+            const std::size_t tab = fields.find('\t');
+            if (tab == std::string_view::npos || tab == 0) {
+                malformed = true;
+                break;
+            }
+            *part = std::string(fields.substr(0, tab));
+            fields = fields.substr(tab + 1);
+        }
+        if (malformed || fields.empty()) {
+            return makeError(ErrorCode::Corruption, where + "malformed user line");
+        }
+        const auto [ptr, parseError] =
+            std::from_chars(fields.data(), fields.data() + fields.size(), user.iterations);
+        if (parseError != std::errc{} || ptr != fields.data() + fields.size() || user.iterations == 0) {
+            return makeError(ErrorCode::Corruption, where + "malformed iteration count");
+        }
+        out.push_back(std::move(user));
     }
     return out;
 }

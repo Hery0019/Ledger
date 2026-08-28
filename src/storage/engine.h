@@ -7,6 +7,7 @@
 #include <string_view>
 #include <vector>
 
+#include "core/password.h"
 #include "core/result.h"
 #include "core/row.h"
 #include "core/schema.h"
@@ -69,6 +70,11 @@ public:
     // (creation order is preserved: it is also the load order).
     virtual Result<void> saveViews(const std::vector<ViewDef>& views) = 0;
     virtual Result<std::vector<ViewDef>> loadViews() = 0;
+
+    // User accounts, same shape as views: one small list, rewritten whole.
+    // Only the salted hashes travel here; passwords never reach the engine.
+    virtual Result<void> saveUsers(const std::vector<UserDef>& users) = 0;
+    virtual Result<std::vector<UserDef>> loadUsers() = 0;
 };
 
 }  // namespace ledger

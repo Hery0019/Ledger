@@ -41,6 +41,8 @@ Result<std::unique_ptr<Database>> Database::open(const std::filesystem::path& di
         for (const auto& j : query->joins) sources.push_back(j.table.name);
         LEDGER_TRY_VOID(db->catalog_.addView(std::move(v), std::move(sources)));
     }
+    LEDGER_TRY(users, db->engine_->loadUsers());
+    for (auto& u : users) LEDGER_TRY_VOID(db->catalog_.addUser(std::move(u)));
     return db;
 }
 

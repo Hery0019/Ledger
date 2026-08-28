@@ -111,10 +111,10 @@ TEST_CASE("transaction state errors") {
     CHECK(db.fail("BEGIN").message == "a transaction is already in progress");
     auto e = db.fail("CREATE TABLE u (a INT)");
     CHECK(e.code == ErrorCode::SyntaxError);
-    CHECK(e.message == "CREATE and DROP are not transactional; COMMIT or ROLLBACK first");
-    CHECK(db.fail("DROP TABLE t").message == "CREATE and DROP are not transactional; COMMIT or ROLLBACK first");
+    CHECK(e.message == "CREATE, DROP and ALTER are not transactional; COMMIT or ROLLBACK first");
+    CHECK(db.fail("DROP TABLE t").message == "CREATE, DROP and ALTER are not transactional; COMMIT or ROLLBACK first");
     CHECK(db.fail("CREATE VIEW v AS SELECT * FROM t").message ==
-          "CREATE and DROP are not transactional; COMMIT or ROLLBACK first");
+          "CREATE, DROP and ALTER are not transactional; COMMIT or ROLLBACK first");
     // A failed statement inside a transaction does not end it.
     CHECK(db.fail("INSERT INTO t VALUES (1, 'dup')").code == ErrorCode::ConstraintViolation);
     CHECK(db.exec.inTransaction());

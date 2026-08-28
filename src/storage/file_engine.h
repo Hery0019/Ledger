@@ -56,6 +56,8 @@ public:
     Result<std::vector<TableSchema>> loadSchemas() override;
     Result<void> saveViews(const std::vector<ViewDef>& views) override;
     Result<std::vector<ViewDef>> loadViews() override;
+    Result<void> saveUsers(const std::vector<UserDef>& users) override;
+    Result<std::vector<UserDef>> loadUsers() override;
 
     // Accumulated warnings (dropped truncated lines...). Cleared on call.
     std::vector<std::string> takeWarnings();
