@@ -62,6 +62,7 @@ target_link_libraries(ledger_cli PUBLIC ledger_exec)
 
 # ---- server -----------------------------------------------------------------
 add_library(ledger_server
+  src/server/handler.cpp
   src/server/json.cpp
 )
 target_link_libraries(ledger_server PUBLIC ledger_cli)
@@ -101,6 +102,7 @@ add_executable(ledger_tests
   tests/test_transactions.cpp
   tests/test_index.cpp
   tests/test_constraints.cpp
+  tests/test_server_handler.cpp
   tests/test_server_json.cpp
 )
 target_include_directories(ledger_tests PRIVATE third_party)
