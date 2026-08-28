@@ -249,7 +249,8 @@ private:
             case TokenKind::KwFloat: advance(); return DataType::Float;
             case TokenKind::KwText:  advance(); return DataType::Text;
             case TokenKind::KwBool:  advance(); return DataType::Bool;
-            default: return unexpected("column type (INT, FLOAT, TEXT or BOOL)");
+            case TokenKind::KwUuid:  advance(); return DataType::Uuid;
+            default: return unexpected("column type (INT, FLOAT, TEXT, BOOL or UUID)");
         }
     }
 

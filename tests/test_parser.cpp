@@ -101,7 +101,7 @@ TEST_CASE("CREATE TABLE syntax errors") {
     CHECK(errorOf("CREATE t (a INT)") == "1:8: expected 'TABLE', 'VIEW' or 'USER', got identifier 't'");
     CHECK(errorOf("CREATE TABLE t") == "1:15: expected '(', got 'end of input'");
     CHECK(errorOf("CREATE TABLE t ()") == "1:17: expected identifier, got ')'");
-    CHECK(errorOf("CREATE TABLE t (a)") == "1:18: expected column type (INT, FLOAT, TEXT or BOOL), got ')'");
+    CHECK(errorOf("CREATE TABLE t (a)") == "1:18: expected column type (INT, FLOAT, TEXT, BOOL or UUID), got ')'");
     CHECK(errorOf("CREATE TABLE t (a INT,)") == "1:23: expected identifier, got ')'");
     CHECK(errorOf("CREATE TABLE t (a INT") == "1:22: expected ')', got 'end of input'");
     CHECK(errorOf("CREATE TABLE t (a INT PRIMARY)") == "1:30: expected 'KEY', got ')'");

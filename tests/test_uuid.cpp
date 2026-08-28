@@ -1,12 +1,40 @@
 #include "doctest.h"
 
+#include <filesystem>
+#include <memory>
 #include <set>
 #include <string>
 
+#include "cli/database.h"
 #include "core/uuid.h"
 #include "core/value.h"
+#include "exec/executor.h"
+#include "storage/memory_engine.h"
 
 using namespace ledger;
+namespace fs = std::filesystem;
+
+namespace {
+
+// Engine + catalog + executor over MemoryEngine, like the executor tests.
+struct Fixture {
+    MemoryEngine engine;
+    Catalog catalog;
+    Executor exec{engine, catalog};
+
+    Result<QueryResult> run(std::string_view sql) { return exec.execute(sql); }
+    // Precondition: `sql` succeeds and returns rows.
+    QueryResult rows(std::string_view sql) {
+        auto r = run(sql);
+        REQUIRE_MESSAGE(r.ok(), "unexpected error: " << (r.ok() ? "" : r.error().message));
+        return std::move(r).value();
+    }
+};
+
+constexpr std::string_view kA = "00000000-0000-4000-8000-00000000000a";
+constexpr std::string_view kB = "00000000-0000-4000-8000-00000000000b";
+
+}  // namespace
 
 // ---- parse / format ------------------------------------------------------------
 
@@ -72,4 +100,118 @@ TEST_CASE("UUID comparison: bytewise order, NULL unknown, other types refused") 
     CHECK(Value::compare(a, Value::null()).value() == Ordering::Unknown);
     CHECK_FALSE(Value::compare(a, Value::integer(1)).ok());
     CHECK_FALSE(Value::compare(a, Value::text("00000000-0000-4000-8000-000000000001")).ok());
+}
+
+// ---- SQL surface ---------------------------------------------------------------
+
+TEST_CASE("UUID columns: explicit text literals convert at bind time") {
+    Fixture f;
+    REQUIRE(f.run("CREATE TABLE t (id UUID PRIMARY KEY, tag TEXT)").ok());
+    REQUIRE(f.run("INSERT INTO t VALUES ('00000000-0000-4000-8000-00000000000a', 'a')").ok());
+    // Uppercase input, canonical lowercase out.
+    REQUIRE(f.run("INSERT INTO t VALUES ('00000000-0000-4000-8000-00000000000B', 'b')").ok());
+    const auto r = f.rows("SELECT id FROM t ORDER BY id");
+    REQUIRE(r.rows.size() == 2);
+    CHECK(r.rows[0][0].toText() == "00000000-0000-4000-8000-00000000000a");
+    CHECK(r.rows[1][0].toText() == "00000000-0000-4000-8000-00000000000b");
+
+    // A malformed literal fails at bind, before any write.
+    auto bad = f.run("INSERT INTO t VALUES ('not-a-uuid', 'x')");
+    REQUIRE_FALSE(bad.ok());
+    CHECK(bad.error().code == ErrorCode::TypeError);
+    CHECK(f.rows("SELECT COUNT(*) AS n FROM t").rows[0][0].asInt() == 2);
+}
+
+TEST_CASE("a UUID PRIMARY KEY generates a fresh v4 when omitted or NULL") {
+    Fixture f;
+    REQUIRE(f.run("CREATE TABLE t (id UUID PRIMARY KEY, n INT)").ok());
+    REQUIRE(f.run("INSERT INTO t (n) VALUES (1)").ok());
+    REQUIRE(f.run("INSERT INTO t VALUES (NULL, 2)").ok());
+    const auto r = f.rows("SELECT id, n FROM t ORDER BY n");
+    REQUIRE(r.rows.size() == 2);
+    for (const auto& row : r.rows) {
+        CHECK(row[0].type() == DataType::Uuid);
+        CHECK((row[0].asUuid().bytes[6] >> 4) == 0x4);  // version 4
+    }
+    CHECK_FALSE(r.rows[0][0] == r.rows[1][0]);  // distinct keys
+}
+
+TEST_CASE("UUID comparisons, IN and BETWEEN accept text constants") {
+    Fixture f;
+    REQUIRE(f.run("CREATE TABLE t (id UUID PRIMARY KEY, n INT)").ok());
+    REQUIRE(f.run(std::string("INSERT INTO t VALUES ('") + std::string(kA) + "', 1)").ok());
+    REQUIRE(f.run(std::string("INSERT INTO t VALUES ('") + std::string(kB) + "', 2)").ok());
+
+    CHECK(f.rows(std::string("SELECT n FROM t WHERE id = '") + std::string(kA) + "'").rows.size() == 1);
+    CHECK(f.rows(std::string("SELECT n FROM t WHERE '") + std::string(kB) + "' = id").rows.size() == 1);
+    CHECK(f.rows(std::string("SELECT n FROM t WHERE id IN ('") + std::string(kA) + "', '" +
+                 std::string(kB) + "')").rows.size() == 2);
+    CHECK(f.rows(std::string("SELECT n FROM t WHERE id BETWEEN '") + std::string(kA) + "' AND '" +
+                 std::string(kB) + "'").rows.size() == 2);
+
+    // The coercion only applies to constants that parse: garbage stays TEXT
+    // and the comparison is refused at bind time.
+    auto bad = f.run("SELECT n FROM t WHERE id = 'nope'");
+    REQUIRE_FALSE(bad.ok());
+    CHECK(bad.error().code == ErrorCode::TypeError);
+    // A TEXT column never silently compares with a UUID column.
+    REQUIRE(f.run("CREATE TABLE s (label TEXT)").ok());
+    CHECK_FALSE(f.run("SELECT * FROM t JOIN s ON t.id = s.label").ok());
+}
+
+TEST_CASE("UUID keys go through the PK index and foreign keys") {
+    Fixture f;
+    REQUIRE(f.run("CREATE TABLE parent (id UUID PRIMARY KEY)").ok());
+    REQUIRE(f.run(std::string("INSERT INTO parent VALUES ('") + std::string(kA) + "')").ok());
+    // Duplicate key refused (through the index).
+    CHECK(f.run(std::string("INSERT INTO parent VALUES ('") + std::string(kA) + "')").error().code ==
+          ErrorCode::ConstraintViolation);
+    // REFERENCES a UUID parent works, and blocks a missing key.
+    REQUIRE(f.run("CREATE TABLE child (id INT PRIMARY KEY, pid UUID REFERENCES parent(id))").ok());
+    CHECK(f.run(std::string("INSERT INTO child VALUES (1, '") + std::string(kA) + "')").ok());
+    CHECK(f.run(std::string("INSERT INTO child VALUES (2, '") + std::string(kB) + "')").error().code ==
+          ErrorCode::ConstraintViolation);
+}
+
+TEST_CASE("UUID restrictions: AUTOINCREMENT, DEFAULT on the key, arithmetic, SUM") {
+    Fixture f;
+    CHECK_FALSE(f.run("CREATE TABLE t (id UUID PRIMARY KEY AUTOINCREMENT)").ok());
+    CHECK_FALSE(f.run(std::string("CREATE TABLE t (id UUID PRIMARY KEY DEFAULT '") +
+                      std::string(kA) + "')").ok());
+    REQUIRE(f.run("CREATE TABLE t (id UUID PRIMARY KEY, n INT)").ok());
+    CHECK_FALSE(f.run("SELECT id + 1 FROM t").ok());
+    CHECK_FALSE(f.run("SELECT SUM(id) FROM t").ok());
+    // MIN/MAX follow the bytewise order and stay allowed.
+    REQUIRE(f.run(std::string("INSERT INTO t VALUES ('") + std::string(kB) + "', 1)").ok());
+    REQUIRE(f.run(std::string("INSERT INTO t VALUES ('") + std::string(kA) + "', 2)").ok());
+    CHECK(f.rows("SELECT MIN(id) AS lo FROM t").rows[0][0].toText() == kA);
+}
+
+TEST_CASE("a plain UUID column (not a key) stays optional and un-generated") {
+    Fixture f;
+    REQUIRE(f.run("CREATE TABLE t (id INT PRIMARY KEY, ref UUID)").ok());
+    REQUIRE(f.run("INSERT INTO t (id) VALUES (1)").ok());
+    CHECK(f.rows("SELECT ref FROM t").rows[0][0].isNull());
+    REQUIRE(f.run(std::string("UPDATE t SET ref = '") + std::string(kA) + "' WHERE id = 1").ok());
+    CHECK(f.rows("SELECT ref FROM t").rows[0][0].toText() == kA);
+}
+
+TEST_CASE("UUID rows and schema survive a database reopen") {
+    const fs::path dir = fs::temp_directory_path() / "ledger_test_uuid_persist";
+    fs::remove_all(dir);
+    std::string generated;
+    {
+        auto db = Database::open(dir).value();
+        REQUIRE(db->execute("CREATE TABLE t (id UUID PRIMARY KEY, n INT)").ok());
+        REQUIRE(db->execute("INSERT INTO t (n) VALUES (1)").ok());
+        generated = db->execute("SELECT id FROM t").value().rows[0][0].toText();
+    }
+    {
+        auto db = Database::open(dir).value();
+        const auto r = db->execute(std::string("SELECT n FROM t WHERE id = '") + generated + "'");
+        REQUIRE(r.ok());
+        REQUIRE(r.value().rows.size() == 1);
+        CHECK(r.value().rows[0][0].asInt() == 1);
+    }
+    fs::remove_all(dir);
 }
