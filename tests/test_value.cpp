@@ -40,7 +40,7 @@ TEST_CASE("Value::real rejects non-finite doubles") {
     CHECK(Value::real(std::numeric_limits<double>::max()).ok());
 }
 
-// ---- fromText : erreurs -----------------------------------------------------
+// ---- fromText: errors -------------------------------------------------------
 
 TEST_CASE("fromText rejects DataType::Null") {
     Result<Value> r = Value::fromText(DataType::Null, "anything");
@@ -84,7 +84,7 @@ TEST_CASE("fromText BOOL rejects anything but true/false") {
     }
 }
 
-// ---- fromText : succès ------------------------------------------------------
+// ---- fromText: success ------------------------------------------------------
 
 TEST_CASE("fromText parses valid literals") {
     CHECK(Value::fromText(DataType::Int, "0").value().asInt() == 0);
@@ -135,7 +135,7 @@ TEST_CASE("toText produces canonical forms") {
     CHECK(Value::text("x").toText() == "x");
 }
 
-// ---- comparaison : NULL -------------------------------------------------------
+// ---- compare: NULL ------------------------------------------------------------
 
 TEST_CASE("compare: NULL with anything is Unknown, never an error") {
     const Value others[] = {Value::null(), Value::integer(1), f(1.0), Value::text("a"), Value::boolean(true)};
@@ -147,12 +147,12 @@ TEST_CASE("compare: NULL with anything is Unknown, never an error") {
 }
 
 TEST_CASE("compare: NULL vs incompatible type is still Unknown (NULL wins over type check)") {
-    // Un NULL de colonne TEXT comparé à un INT ne doit pas lever TypeError :
-    // le binder a déjà validé les types de colonnes, ici NULL absorbe tout.
+    // A NULL from a TEXT column compared with an INT must not raise TypeError:
+    // the binder already validated column types; here NULL absorbs everything.
     CHECK(cmp(Value::null(), Value::text("x")) == Ordering::Unknown);
 }
 
-// ---- comparaison : même type ------------------------------------------------
+// ---- compare: same type -----------------------------------------------------
 
 TEST_CASE("compare: INT") {
     CHECK(cmp(Value::integer(1), Value::integer(2)) == Ordering::Less);
@@ -181,7 +181,7 @@ TEST_CASE("compare: BOOL false < true") {
     CHECK(cmp(Value::boolean(true), Value::boolean(true)) == Ordering::Equal);
 }
 
-// ---- comparaison : types mixtes ---------------------------------------------
+// ---- compare: mixed types ---------------------------------------------------
 
 TEST_CASE("compare: INT vs FLOAT is numeric in both directions") {
     CHECK(cmp(Value::integer(2), f(2.0)) == Ordering::Equal);
@@ -207,12 +207,12 @@ TEST_CASE("compare: incompatible types are a TypeError, not false") {
     }
 }
 
-// ---- égalité structurelle ---------------------------------------------------
+// ---- structural equality ----------------------------------------------------
 
 TEST_CASE("operator== is strict structural equality") {
     CHECK(Value::null() == Value::null());
     CHECK(Value::integer(2) == Value::integer(2));
-    CHECK_FALSE(Value::integer(2) == f(2.0));       // types différents : pas égaux
+    CHECK_FALSE(Value::integer(2) == f(2.0));       // different types: not equal
     CHECK_FALSE(Value::text("1") == Value::integer(1));
     CHECK_FALSE(Value::boolean(true) == Value::integer(1));
 }

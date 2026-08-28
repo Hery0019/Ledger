@@ -16,30 +16,30 @@ namespace ledger {
 enum class ResultKind { Ddl, Dml, Select };
 
 struct QueryResult {
-    std::vector<std::string> columns;  // en-têtes (SELECT uniquement)
-    std::vector<Row> rows;             // lignes projetées (SELECT uniquement)
-    std::size_t affected = 0;          // INSERT/UPDATE/DELETE : lignes touchées
+    std::vector<std::string> columns;  // headers (SELECT only)
+    std::vector<Row> rows;             // projected rows (SELECT only)
+    std::size_t affected = 0;          // INSERT/UPDATE/DELETE: rows touched
     ResultKind kind = ResultKind::Ddl;
 };
 
-// Déroule un BoundStatement sur un moteur de stockage. Seul endroit qui
-// modifie le Catalog (après un CREATE/DROP réussi côté stockage) et qui
-// applique la contrainte PRIMARY KEY (par scan : pas d'index en v1).
+// Runs a BoundStatement on a storage engine. The only place that modifies the
+// Catalog (after a successful CREATE/DROP on the storage side) and that
+// enforces the PRIMARY KEY constraint (by scan: no index in v1).
 //
-// Pas de transactions : toutes les erreurs prévisibles (types, PK, erreur
-// d'évaluation sur une ligne) sont levées AVANT la première écriture, en deux
-// passes pour UPDATE/DELETE. Seule une IoError en cours d'écriture peut
-// laisser un état partiel ; elle est remontée telle quelle.
+// No transactions: every predictable error (types, PK, evaluation error on a
+// row) is raised BEFORE the first write, in two passes for UPDATE/DELETE.
+// Only an IoError in the middle of the writes can leave a partial state; it
+// is propagated as is.
 //
-// SELECT : filtre (WHERE doit valoir true ; NULL et false rejettent), tri
-// stable par Value::compare (NULL plus petit que tout : premier en ASC,
-// dernier en DESC), LIMIT, puis projection. Sans ORDER BY, ordre des rowid.
+// SELECT: filter (WHERE must be true; NULL and false reject), stable sort by
+// Value::compare (NULL smaller than everything: first in ASC, last in DESC),
+// LIMIT, then projection. Without ORDER BY, rowid order.
 class Executor {
 public:
     Executor(IStorageEngine& engine, Catalog& catalog) noexcept
         : engine_(engine), catalog_(catalog) {}
 
-    // Texte SQL -> parse -> bind -> exécution.
+    // SQL text -> parse -> bind -> execute.
     Result<QueryResult> execute(std::string_view sql);
     Result<QueryResult> execute(const BoundStatement& stmt);
 
@@ -51,7 +51,7 @@ private:
     Result<QueryResult> run(const BoundUpdate& s);
     Result<QueryResult> run(const BoundDelete& s);
 
-    // Lignes vivantes satisfaisant `where` (nullptr = toutes).
+    // Live rows satisfying `where` (nullptr = all of them).
     Result<std::vector<std::pair<RowId, Row>>> filter(const TableSchema& table,
                                                       const BoundExpr* where);
     Result<void> checkPrimaryKey(const TableSchema& table, const Value& key,

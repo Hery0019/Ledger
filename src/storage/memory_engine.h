@@ -7,8 +7,8 @@
 
 namespace ledger {
 
-// Moteur tout en mémoire, sans persistance. Sert de référence aux tests de
-// l'exécuteur et de la CLI : même contrat que FileEngine, zéro disque.
+// All-in-memory engine, no persistence. Reference implementation for the
+// executor and CLI tests: same contract as FileEngine, zero disk.
 class MemoryEngine final : public IStorageEngine {
 public:
     Result<void> createTable(const TableSchema& schema) override;

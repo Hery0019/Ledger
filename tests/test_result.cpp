@@ -18,7 +18,7 @@ Result<void> check(bool ok) {
     return {};
 }
 
-// Vérifie que LEDGER_TRY propage bien l'erreur et déballe bien la valeur.
+// Checks that LEDGER_TRY propagates the error and unwraps the value.
 Result<int> sumPositives(int a, int b) {
     LEDGER_TRY(x, parsePositive(a));
     LEDGER_TRY(y, parsePositive(b));

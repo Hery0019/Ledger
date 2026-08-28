@@ -15,8 +15,8 @@ Error rowError(RowId id, const Error& e) {
     return makeError(e.code, "row " + std::to_string(id) + ": " + e.message);
 }
 
-// Ordre total pour le tri : NULL avant tout, sinon Value::compare. Les types
-// sont homogènes dans une colonne, compare ne peut pas échouer ici.
+// Total order for sorting: NULL before everything, otherwise Value::compare.
+// Types are homogeneous within a column, so compare cannot fail here.
 bool lessForSort(const Value& a, const Value& b) {
     if (a.isNull()) return !b.isNull();
     if (b.isNull()) return false;
@@ -57,12 +57,12 @@ Result<QueryResult> Executor::run(const BoundDropTable& s) {
     return QueryResult{};
 }
 
-// ---- aides -----------------------------------------------------------------
+// ---- helpers ---------------------------------------------------------------
 
 Result<std::vector<std::pair<RowId, Row>>> Executor::filter(const TableSchema& table,
                                                             const BoundExpr* where) {
     std::vector<std::pair<RowId, Row>> out;
-    // WHERE de type Null (littéral NULL) : aucune ligne, inutile de scanner.
+    // WHERE of type Null (NULL literal): no row, no need to scan.
     if (where && where->type == DataType::Null) return out;
 
     std::optional<Error> failure;
@@ -90,8 +90,8 @@ Result<void> Executor::checkPrimaryKey(const TableSchema& table, const Value& ke
     bool duplicate = false;
     LEDGER_TRY_VOID(engine_.scan(table.name, [&](RowId id, const Row& row) {
         if (std::find(ignore.begin(), ignore.end(), id) != ignore.end()) return true;
-        // PK => NOT NULL : aucun des deux n'est NULL, compare ne renvoie
-        // jamais Unknown ni erreur (même type).
+        // PK => NOT NULL: neither side is NULL, compare never returns Unknown
+        // nor an error (same type).
         if (Value::compare(row[*pk], key).value() == Ordering::Equal) {
             duplicate = true;
             return false;
@@ -144,9 +144,8 @@ Result<QueryResult> Executor::run(const BoundSelect& s) {
 }
 
 Result<QueryResult> Executor::run(const BoundUpdate& s) {
-    // Passe 1 : calcul de toutes les nouvelles lignes, sans rien écrire.
-    // Chaque assignation est évaluée sur la ligne d'ORIGINE, donc
-    // `SET a = b, b = a` échange bien les deux.
+    // Pass 1: compute every new row, writing nothing. Each assignment is
+    // evaluated on the ORIGINAL row, so `SET a = b, b = a` really swaps.
     LEDGER_TRY(matches, filter(*s.table, s.where.get()));
     std::vector<std::pair<RowId, Row>> updated;
     updated.reserve(matches.size());
@@ -155,8 +154,8 @@ Result<QueryResult> Executor::run(const BoundUpdate& s) {
         for (const auto& [col, expr] : s.assignments) {
             auto v = eval(*expr, original);
             if (!v.ok()) return rowError(id, v.error());
-            // Le binder a refusé un NULL garanti ; ici on attrape un NULL
-            // issu d'une colonne nullable (`SET name = other_nullable`).
+            // The binder refused a guaranteed NULL; here we catch a NULL that
+            // comes from a nullable column (`SET name = other_nullable`).
             if (v.value().isNull() && s.table->columns[col].notNull) {
                 return makeError(ErrorCode::ConstraintViolation,
                                  "row " + std::to_string(id) + ": column '" +
@@ -167,8 +166,8 @@ Result<QueryResult> Executor::run(const BoundUpdate& s) {
         updated.emplace_back(id, std::move(next));
     }
 
-    // Contrainte PK : chaque nouvelle clé contre les lignes non modifiées et
-    // contre les autres lignes modifiées.
+    // PK constraint: every new key against the untouched rows and against the
+    // other modified rows.
     if (const auto pk = s.table->primaryKeyIndex()) {
         std::vector<RowId> touched;
         touched.reserve(updated.size());
@@ -186,7 +185,7 @@ Result<QueryResult> Executor::run(const BoundUpdate& s) {
         }
     }
 
-    // Passe 2 : écriture.
+    // Pass 2: write.
     for (const auto& [id, row] : updated) LEDGER_TRY_VOID(engine_.update(s.table->name, id, row));
     return QueryResult{{}, {}, updated.size(), ResultKind::Dml};
 }

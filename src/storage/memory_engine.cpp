@@ -68,7 +68,7 @@ Result<void> MemoryEngine::remove(std::string_view table, RowId id) {
 
 Result<void> MemoryEngine::compact(std::string_view table) {
     LEDGER_TRY_VOID(find(table));
-    return {};  // rien à compacter en mémoire
+    return {};  // nothing to compact in memory
 }
 
 Result<std::vector<TableSchema>> MemoryEngine::loadSchemas() {

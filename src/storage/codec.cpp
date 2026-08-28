@@ -11,7 +11,7 @@ constexpr std::string_view kNull = "\\N";
 
 Error corruption(std::string what) { return makeError(ErrorCode::Corruption, std::move(what)); }
 
-// Découpe sur un séparateur ; "" donne [""] (un champ vide), jamais [].
+// Splits on a separator; "" gives [""] (one empty field), never [].
 std::vector<std::string_view> split(std::string_view s, char sep) {
     std::vector<std::string_view> out;
     std::size_t start = 0;
@@ -45,7 +45,7 @@ std::optional<DataType> parseType(std::string_view name) {
 
 }  // namespace
 
-// ---- texte -----------------------------------------------------------------
+// ---- text ------------------------------------------------------------------
 
 std::string escapeText(std::string_view text) {
     std::string out;
@@ -83,7 +83,7 @@ Result<std::string> unescapeText(std::string_view field) {
     return out;
 }
 
-// ---- valeurs ---------------------------------------------------------------
+// ---- values ----------------------------------------------------------------
 
 std::string encodeValue(const Value& value) {
     if (value.isNull()) return std::string(kNull);
@@ -102,7 +102,7 @@ Result<Value> decodeValue(std::string_view field, DataType type) {
     return v;
 }
 
-// ---- schéma ----------------------------------------------------------------
+// ---- schema ----------------------------------------------------------------
 
 std::string encodeSchema(const TableSchema& schema) {
     std::string out(kSchemaHeader);
@@ -120,7 +120,7 @@ std::string encodeSchema(const TableSchema& schema) {
 
 Result<TableSchema> decodeSchema(std::string_view tableName, std::string_view content) {
     auto lines = split(content, '\n');
-    // Un fichier bien formé se termine par '\n' : dernier élément vide.
+    // A well-formed file ends with '\n': last element empty.
     if (!lines.empty() && lines.back().empty()) lines.pop_back();
     if (lines.empty() || lines[0] != kSchemaHeader) {
         return corruption("schema.txt: missing or unknown header (expected '" +
@@ -149,7 +149,7 @@ Result<TableSchema> decodeSchema(std::string_view tableName, std::string_view co
     return schema;
 }
 
-// ---- enregistrements -------------------------------------------------------
+// ---- records ---------------------------------------------------------------
 
 std::string encodeInsert(RowId id, const Row& row) {
     std::string out = "I " + std::to_string(id);

@@ -1,11 +1,11 @@
-// ledger <dossier> : ouvre (ou crée) une base et exécute du SQL.
+// ledger <directory>: opens (or creates) a database and runs SQL.
 //
-//  - stdin terminal  : REPL. Une instruction se termine par `;` (multi-lignes),
-//                      commandes `.quit`, `.tables`, `.schema <table>`.
-//  - stdin redirigé  : mode script. Tout stdin est lu, chaque instruction est
-//                      exécutée ; arrêt à la première erreur (code 1).
+//  - stdin is a terminal : REPL. A statement ends with `;` (multi-line),
+//                          commands `.quit`, `.tables`, `.schema <table>`.
+//  - stdin is redirected : script mode. All of stdin is read, every statement
+//                          is run; stops at the first error (exit code 1).
 //
-// Codes de sortie : 0 ok, 1 erreur SQL / base, 2 erreur d'usage.
+// Exit codes: 0 ok, 1 SQL / database error, 2 usage error.
 
 #include <cstdio>
 #include <iostream>
@@ -28,9 +28,9 @@ using namespace ledger;
 
 namespace {
 
-// Affiche une erreur. `line` est la ligne de début de l'instruction dans le
-// script (0 = inconnue). Un message positionné `L:C: ...` (relatif à
-// l'instruction) est réécrit en position absolue dans le script.
+// Prints an error. `line` is the statement's starting line in the script
+// (0 = unknown). A positioned message `L:C: ...` (relative to the statement)
+// is rewritten as an absolute position in the script.
 void printError(const Error& e, std::size_t line = 0) {
     std::cerr << "error [" << errorCodeName(e.code) << "]";
     std::string message = e.message;
@@ -52,7 +52,7 @@ void printWarnings(Database& db) {
     for (const auto& w : db.takeWarnings()) std::cerr << "warning: " << w << '\n';
 }
 
-// Exécute une instruction et affiche le résultat. Renvoie false en cas d'erreur.
+// Runs one statement and prints the result. Returns false on error.
 bool runOne(Database& db, std::string_view sql, std::size_t line) {
     auto r = db.execute(sql);
     if (!r.ok()) {
@@ -64,7 +64,7 @@ bool runOne(Database& db, std::string_view sql, std::size_t line) {
     return true;
 }
 
-// Commandes point du REPL. Renvoie true si `line` en était une (traitée).
+// REPL dot commands. Returns true if `line` was one (and was handled).
 bool dotCommand(Database& db, const std::string& line, bool& quit) {
     if (line.empty() || line[0] != '.') return false;
     std::istringstream in(line);
@@ -90,9 +90,9 @@ bool dotCommand(Database& db, const std::string& line, bool& quit) {
             std::cout << ");\n";
         }
     } else if (cmd == ".help") {
-        std::cout << ".tables          liste les tables\n"
-                     ".schema <table>  affiche la définition d'une table\n"
-                     ".quit            quitte\n";
+        std::cout << ".tables          list tables\n"
+                     ".schema <table>  show a table's definition\n"
+                     ".quit            exit\n";
     } else {
         std::cerr << "error: unknown command '" << cmd << "' (try .help)\n";
     }
@@ -100,8 +100,8 @@ bool dotCommand(Database& db, const std::string& line, bool& quit) {
 }
 
 int repl(Database& db) {
-    std::cout << "ledger — base " << db.directory().string() << "\n"
-              << "Terminez chaque instruction par ';'. .help pour les commandes.\n";
+    std::cout << "ledger - database " << db.directory().string() << "\n"
+              << "End each statement with ';'. Type .help for commands.\n";
     std::string buffer;
     std::string line;
     bool quit = false;

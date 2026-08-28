@@ -10,17 +10,17 @@
 
 namespace ledger {
 
-// Catégories d'erreurs attendues. Ce sont des erreurs "métier" que l'appelant
-// est censé gérer, par opposition aux bugs (qui doivent faire échouer bruyamment).
+// Categories of expected errors. These are "business" errors the caller is
+// meant to handle, as opposed to bugs (which must fail loudly).
 enum class ErrorCode {
-    SyntaxError,          // SQL mal formé
-    TypeError,            // types incompatibles, conversion impossible
+    SyntaxError,          // malformed SQL
+    TypeError,            // incompatible types, impossible conversion
     ConstraintViolation,  // PRIMARY KEY, NOT NULL...
-    NotFound,             // table / colonne inexistante
-    AlreadyExists,        // CREATE TABLE sur une table existante
-    IoError,              // disque, permissions
-    Corruption,           // fichier de données illisible
-    Internal,             // invariant violé : ne devrait jamais arriver
+    NotFound,             // unknown table / column
+    AlreadyExists,        // CREATE TABLE on an existing table
+    IoError,              // disk, permissions
+    Corruption,           // unreadable data file
+    Internal,             // broken invariant: should never happen
 };
 
 std::string_view errorCodeName(ErrorCode code) noexcept;
@@ -34,9 +34,8 @@ struct Error {
 
 namespace detail {
 [[noreturn]] inline void dieOnBadAccess(const char* what, const Error* err) {
-    // Accéder à la valeur d'un Result en erreur est un bug de programmation,
-    // pas une erreur attendue. On ne lance pas d'exception : on arrête net,
-    // avec un message exploitable.
+    // Accessing the value of a failed Result is a programming bug, not an
+    // expected error. No exception: stop right there with a usable message.
     std::fprintf(stderr, "ledger: fatal: %s", what);
     if (err) {
         std::fprintf(stderr, " (error: %.*s: %s)",
@@ -48,21 +47,20 @@ namespace detail {
 }
 }  // namespace detail
 
-// Result<T> contient soit un T, soit une Error. Jamais les deux, jamais aucun.
+// Result<T> holds either a T or an Error. Never both, never neither.
 //
-// Usage :
+// Usage:
 //   Result<int> r = parseInt("42");
 //   if (!r.ok()) return r.error();      // propagation
 //   int v = std::move(r).value();       // extraction
 //
-// L'accès à value() sur un Result en erreur abort() : le design impose
-// de tester ok() avant. [[nodiscard]] empêche d'ignorer silencieusement
-// un Result retourné.
+// Calling value() on a failed Result abort()s: the design forces you to test
+// ok() first. [[nodiscard]] prevents silently ignoring a returned Result.
 template <typename T>
 class [[nodiscard]] Result {
 public:
-    // Implicite volontairement : permet `return Error{...};` et `return value;`
-    // dans une fonction qui retourne Result<T>.
+    // Deliberately implicit: allows `return Error{...};` and `return value;`
+    // in a function returning Result<T>.
     Result(T value) : data_(std::move(value)) {}  // NOLINT(google-explicit-constructor)
     Result(Error error) : data_(std::move(error)) {}  // NOLINT(google-explicit-constructor)
 
@@ -100,11 +98,11 @@ private:
     std::variant<T, Error> data_;
 };
 
-// Spécialisation pour les opérations qui ne produisent pas de valeur.
+// Specialization for operations that produce no value.
 template <>
 class [[nodiscard]] Result<void> {
 public:
-    Result() = default;  // succès
+    Result() = default;  // success
     Result(Error error) : error_(std::move(error)) {}  // NOLINT(google-explicit-constructor)
 
     [[nodiscard]] bool ok() const noexcept { return !error_.has_value(); }
@@ -123,19 +121,19 @@ private:
     std::optional<Error> error_;
 };
 
-// Raccourci de construction d'erreur.
+// Shorthand for building an error.
 inline Error makeError(ErrorCode code, std::string message) {
     return Error{code, std::move(message)};
 }
 
 }  // namespace ledger
 
-// Propagation d'erreur à la Rust `?`. Portable (pas d'extension GNU).
+// Rust-style `?` error propagation. Portable (no GNU extension).
 //
-//   LEDGER_TRY(v, parseInt(s));   // déclare `v` de type T, ou `return` l'erreur
-//   LEDGER_TRY_VOID(writeFile());  // pour Result<void>
+//   LEDGER_TRY(v, parseInt(s));   // declares `v` of type T, or `return`s the error
+//   LEDGER_TRY_VOID(writeFile());  // for Result<void>
 //
-// La fonction englobante doit retourner un Result<U> quelconque.
+// The enclosing function must return some Result<U>.
 #define LEDGER_CONCAT_IMPL(a, b) a##b
 #define LEDGER_CONCAT(a, b) LEDGER_CONCAT_IMPL(a, b)
 

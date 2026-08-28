@@ -11,15 +11,15 @@
 namespace ledger {
 
 struct ColumnSchema {
-    std::string name;  // minuscules
-    DataType type;     // jamais DataType::Null
+    std::string name;  // lowercase
+    DataType type;     // never DataType::Null
     bool primaryKey;
-    bool notNull;      // toujours true si primaryKey
+    bool notNull;      // always true when primaryKey
 };
 
 struct TableSchema {
-    std::string name;  // minuscules
-    std::vector<ColumnSchema> columns;  // jamais vide
+    std::string name;  // lowercase
+    std::vector<ColumnSchema> columns;  // never empty
 
     [[nodiscard]] std::optional<std::size_t> columnIndex(std::string_view column) const noexcept {
         for (std::size_t i = 0; i < columns.size(); ++i) {
@@ -28,7 +28,7 @@ struct TableSchema {
         return std::nullopt;
     }
 
-    // Index de la colonne PRIMARY KEY, s'il y en a une (au plus une par table).
+    // Index of the PRIMARY KEY column, if any (at most one per table).
     [[nodiscard]] std::optional<std::size_t> primaryKeyIndex() const noexcept {
         for (std::size_t i = 0; i < columns.size(); ++i) {
             if (columns[i].primaryKey) return i;

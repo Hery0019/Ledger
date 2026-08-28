@@ -11,16 +11,16 @@
 
 namespace ledger {
 
-// Identifiant d'une ligne, unique dans sa table, monotone, jamais réutilisé.
-// Un update conserve le rowid : la ligne garde son identité.
+// Row identifier, unique within its table, monotonic, never reused. An update
+// keeps the rowid: the row keeps its identity.
 using RowId = std::uint64_t;
 
-// Contrat du moteur de stockage. L'exécuteur ne connaît que cette interface ;
-// FileEngine (fichiers texte) et MemoryEngine (tests) l'implémentent.
+// Storage engine contract. The executor only knows this interface;
+// FileEngine (text files) and MemoryEngine (tests) implement it.
 //
-// Le moteur ne vérifie PAS les types des valeurs (c'est le binder) ; il
-// vérifie seulement que la Row a le bon nombre de colonnes (sinon Internal :
-// c'est un bug de l'appelant, pas une erreur attendue).
+// The engine does NOT check value types (that is the binder's job); it only
+// checks that the Row has the right number of columns (otherwise Internal:
+// a caller bug, not an expected error).
 class IStorageEngine {
 public:
     virtual ~IStorageEngine() = default;
@@ -30,22 +30,21 @@ public:
 
     virtual Result<RowId> insert(std::string_view table, const Row& row) = 0;
 
-    // Parcourt les lignes vivantes par rowid croissant. `visit` renvoie false
-    // pour arrêter. Aucune copie de la table entière : c'est pour ça qu'on
-    // passe un callback et non un vector.
-    // Précondition : ne pas modifier la table pendant le parcours.
+    // Walks the live rows by ascending rowid. `visit` returns false to stop.
+    // No copy of the whole table: that is why a callback is used instead of
+    // a vector.
+    // Precondition: do not modify the table during the walk.
     virtual Result<void> scan(std::string_view table,
                               const std::function<bool(RowId, const Row&)>& visit) = 0;
 
     virtual Result<void> update(std::string_view table, RowId id, const Row& row) = 0;  // NotFound
     virtual Result<void> remove(std::string_view table, RowId id) = 0;                  // NotFound
 
-    // Réécrit le fichier de lignes sans les tombstones. Le moteur peut aussi le
-    // déclencher de lui-même.
+    // Rewrites the rows file without tombstones. The engine may also trigger
+    // it on its own.
     virtual Result<void> compact(std::string_view table) = 0;
 
-    // Schémas de toutes les tables existantes, pour remplir le Catalog au
-    // démarrage.
+    // Schemas of every existing table, to fill the Catalog at startup.
     virtual Result<std::vector<TableSchema>> loadSchemas() = 0;
 };
 

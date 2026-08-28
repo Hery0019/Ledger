@@ -10,7 +10,7 @@ using namespace ledger::ast;
 
 namespace {
 
-// Précondition : parse réussit et produit une instruction de type T.
+// Precondition: parse succeeds and produces a statement of type T.
 template <typename T>
 T parseAs(std::string_view sql) {
     auto r = parse(sql);
@@ -26,12 +26,12 @@ std::string errorOf(std::string_view sql) {
     return r.error().message;
 }
 
-// Parse une expression via un WHERE pour tester les expressions seules.
+// Parses an expression through a WHERE, to test expressions on their own.
 ExprPtr expr(std::string_view e) {
     return std::move(parseAs<Select>("SELECT * FROM t WHERE " + std::string(e)).where);
 }
 
-// Sérialisation parenthésée : rend la forme de l'arbre lisible et comparable.
+// Parenthesized serialization: makes the tree shape readable and comparable.
 std::string show(const Expr& e) {
     return std::visit(
         [](const auto& n) -> std::string {
@@ -229,7 +229,7 @@ TEST_CASE("DELETE with and without WHERE") {
     CHECK(errorOf("DELETE t") == "1:8: expected 'FROM', got identifier 't'");
 }
 
-// ---- structure générale ----------------------------------------------------
+// ---- general structure -----------------------------------------------------
 
 TEST_CASE("unknown statement and trailing garbage") {
     CHECK(errorOf("") == "1:1: expected statement (CREATE, DROP, INSERT, SELECT, UPDATE or DELETE), got 'end of input'");
@@ -247,7 +247,7 @@ TEST_CASE("statements carry positions on multiple lines") {
     CHECK(errorOf("SELECT *\nFROM t\nWHERE") == "3:6: expected expression, got 'end of input'");
 }
 
-// ---- expressions : littéraux -----------------------------------------------
+// ---- expressions: literals -------------------------------------------------
 
 TEST_CASE("literals become Values") {
     CHECK(show("42") == "42");
@@ -271,7 +271,7 @@ TEST_CASE("expressions carry the position of their first token") {
     CHECK(std::get<Binary>(e->node).rhs->column == 27);
 }
 
-// ---- expressions : précédence et associativité -----------------------------
+// ---- expressions: precedence and associativity -----------------------------
 
 TEST_CASE("arithmetic precedence and left associativity") {
     CHECK(show("1 + 2 * 3") == "(1 + (2 * 3))");
@@ -344,7 +344,7 @@ TEST_CASE("expression syntax errors") {
     CHECK(errorOf("SELECT * FROM t WHERE SELECT") == "1:23: expected expression, got 'SELECT'");
 }
 
-// ---- noms d'opérateurs -----------------------------------------------------
+// ---- operator names --------------------------------------------------------
 
 TEST_CASE("operator names") {
     CHECK(unaryOpName(UnaryOp::Not) == "NOT");

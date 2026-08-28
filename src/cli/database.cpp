@@ -15,14 +15,15 @@ Result<std::unique_ptr<Database>> Database::open(const std::filesystem::path& di
     return db;
 }
 
-// ---- découpage -------------------------------------------------------------
+// ---- splitting -------------------------------------------------------------
 
 namespace {
 
 bool isBlank(char c) noexcept { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
 
-// Parcourt `text` en signalant chaque `;` significatif (hors chaîne, hors
-// commentaire) via `onSemicolon(pos)`. Renvoie true si on termine hors chaîne.
+// Walks `text`, reporting every significant `;` (outside strings, outside
+// comments) through `onSemicolon(pos)`. Returns true if we end outside a
+// string.
 template <typename F>
 bool scanSemicolons(std::string_view text, F onSemicolon) {
     bool inString = false;
@@ -30,7 +31,7 @@ bool scanSemicolons(std::string_view text, F onSemicolon) {
         const char c = text[i];
         if (inString) {
             if (c == '\'') {
-                if (i + 1 < text.size() && text[i + 1] == '\'') ++i;  // '' échappé
+                if (i + 1 < text.size() && text[i + 1] == '\'') ++i;  // escaped ''
                 else inString = false;
             }
         } else if (c == '\'') {
@@ -46,7 +47,7 @@ bool scanSemicolons(std::string_view text, F onSemicolon) {
     return !inString;
 }
 
-// Vrai si `s` ne contient que des blancs et des commentaires.
+// True if `s` contains only whitespace and comments.
 bool isEmptyStatement(std::string_view s) {
     for (std::size_t i = 0; i < s.size(); ++i) {
         if (isBlank(s[i])) continue;
@@ -65,18 +66,17 @@ bool isEmptyStatement(std::string_view s) {
 
 std::vector<ScriptStatement> splitStatements(std::string_view text) {
     std::vector<ScriptStatement> out;
-    // BOM UTF-8 en tête : le Bloc-notes et PowerShell en ajoutent un ; ce
-    // n'est pas du SQL.
+    // Leading UTF-8 BOM: Notepad and PowerShell add one; it is not SQL.
     if (text.starts_with("\xEF\xBB\xBF")) text.remove_prefix(3);
     std::size_t start = 0;
 
-    // Ajoute text[start, end) s'il contient une instruction ; sa ligne est
-    // celle de son premier caractère non blanc.
+    // Adds text[start, end) if it holds a statement; its line is that of its
+    // first useful character.
     auto emit = [&](std::size_t end) {
         const std::string_view piece = text.substr(start, end - start);
         if (!isEmptyStatement(piece)) {
-            // Saute blancs et commentaires de tête : la ligne rapportée est
-            // celle du SQL lui-même.
+            // Skip leading whitespace and comments: the reported line is the
+            // SQL's own.
             std::size_t first = 0;
             for (;;) {
                 while (first < piece.size() && isBlank(piece[first])) ++first;
@@ -89,15 +89,15 @@ std::vector<ScriptStatement> splitStatements(std::string_view text) {
             }
             const auto upto = text.begin() + static_cast<std::ptrdiff_t>(start + first);
             const auto line = 1 + static_cast<std::size_t>(std::count(text.begin(), upto, '\n'));
-            // Le SQL conservé commence au premier caractère utile : les
-            // positions `ligne:col` du parser sont alors relatives à lui.
+            // The stored SQL starts at the first useful character: the
+            // parser's `line:col` positions are then relative to it.
             out.push_back(ScriptStatement{std::string(piece.substr(first)), line});
         }
         start = end + 1;
     };
 
     scanSemicolons(text, emit);
-    if (start < text.size()) emit(text.size());  // dernier morceau sans `;`
+    if (start < text.size()) emit(text.size());  // last piece without `;`
     return out;
 }
 
@@ -108,14 +108,13 @@ bool endsWithCompleteStatement(std::string_view text) {
     return isEmptyStatement(text.substr(lastSemicolon + 1));
 }
 
-// ---- affichage -------------------------------------------------------------
+// ---- display ---------------------------------------------------------------
 
 namespace {
 
 std::string cell(const Value& v) { return v.isNull() ? "NULL" : v.toText(); }
 
-// Largeur d'affichage en points de code UTF-8, pas en octets : « café »
-// n'aligne pas de travers.
+// Display width in UTF-8 code points, not bytes: "café" does not misalign.
 std::size_t displayWidth(std::string_view s) noexcept {
     std::size_t n = 0;
     for (const char ch : s) n += (static_cast<unsigned char>(ch) & 0xC0) != 0x80;

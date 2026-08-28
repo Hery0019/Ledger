@@ -8,36 +8,36 @@
 #include "core/schema.h"
 #include "storage/engine.h"
 
-// Encodage texte des fichiers d'une table. Isolé du moteur pour être testé
-// seul : c'est ici que se cachent les bugs d'échappement.
+// Text encoding of a table's files. Kept apart from the engine so it can be
+// tested alone: this is where escaping bugs hide.
 //
-// schema.txt :
+// schema.txt:
 //   ledger-schema 1
-//   <colonne> <TYPE> [PK] [NN]        (PK implique NN, qui n'est alors pas écrit)
+//   <column> <TYPE> [PK] [NN]         (PK implies NN, which is then not written)
 //
-// rows.txt (append-only) :
+// rows.txt (append-only):
 //   ledger-rows 1
-//   I <rowid>\t<champ>\t<champ>...     insertion (ou nouvelle version après update)
+//   I <rowid>\t<field>\t<field>...     insertion (or new version after update)
 //   D <rowid>                          tombstone
 //
-// Champs : Int/Float/Bool via Value::toText ; NULL = `\N` ; Text échappé
-// (`\\` `\t` `\n` `\r`). Une chaîne vide est un champ vide, distinct de `\N`.
+// Fields: Int/Float/Bool via Value::toText; NULL = `\N`; Text escaped
+// (`\\` `\t` `\n` `\r`). An empty string is an empty field, distinct from `\N`.
 namespace ledger::codec {
 
 inline constexpr std::string_view kSchemaHeader = "ledger-schema 1";
 inline constexpr std::string_view kRowsHeader = "ledger-rows 1";
 
 std::string escapeText(std::string_view text);
-Result<std::string> unescapeText(std::string_view field);  // Corruption si échappement invalide
+Result<std::string> unescapeText(std::string_view field);  // Corruption on invalid escape
 
 std::string encodeValue(const Value& value);
 Result<Value> decodeValue(std::string_view field, DataType type);  // Corruption
 
-// Contenu complet de schema.txt.
+// Full content of schema.txt.
 std::string encodeSchema(const TableSchema& schema);
 Result<TableSchema> decodeSchema(std::string_view tableName, std::string_view content);
 
-// Une ligne de rows.txt, sans le `\n` final.
+// One line of rows.txt, without the trailing `\n`.
 std::string encodeInsert(RowId id, const Row& row);
 std::string encodeTombstone(RowId id);
 
@@ -45,7 +45,7 @@ struct Record {
     enum class Kind { Insert, Delete };
     Kind kind;
     RowId id;
-    Row row;  // vide pour Delete
+    Row row;  // empty for Delete
 };
 Result<Record> decodeRecord(std::string_view line, const TableSchema& schema);
 

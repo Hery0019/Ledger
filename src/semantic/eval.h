@@ -6,24 +6,25 @@
 
 namespace ledger {
 
-// Évalue une expression liée sur une ligne. Unique implémentation de la
-// sémantique des opérateurs : utilisée par le binder (pliage de constantes)
-// et par l'exécuteur (ligne par ligne).
+// Evaluates a bound expression on a row. The single implementation of
+// operator semantics: used by the binder (constant folding) and by the
+// executor (row by row).
 //
-// Précondition : l'expression a été produite par le binder, donc les types
-// sont compatibles. Les seules erreurs possibles dépendent des données :
-//  - division par zéro                      -> TypeError
-//  - débordement d'un Int (+ - * / négation) -> TypeError, jamais de wrap
-//  - résultat Float non fini                 -> TypeError (via Value::real)
+// Precondition: the expression was produced by the binder, so the types are
+// compatible. The only possible errors depend on the data:
+//  - division by zero                       -> TypeError
+//  - Int overflow (+ - * / negation)        -> TypeError, never a wrap
+//  - non-finite Float result                -> TypeError (via Value::real)
 //
-// Sémantique de NULL (logique à trois états SQL) :
-//  - arithmétique, comparaison, négation : NULL si un opérande est NULL ;
-//  - AND : false si un opérande est false, sinon NULL si un est NULL, sinon true ;
-//  - OR  : true si un opérande est true, sinon NULL si un est NULL, sinon false ;
-//  - NOT NULL = NULL ; x IS NULL est toujours un vrai booléen.
+// NULL semantics (SQL three-valued logic):
+//  - arithmetic, comparison, negation: NULL if an operand is NULL;
+//  - AND: false if an operand is false, else NULL if one is NULL, else true;
+//  - OR: true if an operand is true, else NULL if one is NULL, else false;
+//  - NOT NULL = NULL; x IS NULL is always a real boolean.
 Result<Value> eval(const BoundExpr& expr, const Row& row);
 
-// Vrai si l'expression ne référence aucune colonne (donc évaluable sans ligne).
+// True if the expression references no column (so it can be evaluated
+// without a row).
 [[nodiscard]] bool isConstant(const BoundExpr& expr) noexcept;
 
 }  // namespace ledger

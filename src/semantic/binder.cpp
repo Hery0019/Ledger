@@ -38,7 +38,7 @@ public:
     }
 
 private:
-    // ---- instructions ------------------------------------------------------
+    // ---- statements --------------------------------------------------------
 
     Result<BoundStatement> bindStatement(const ast::CreateTable& s) {
         if (catalog_.contains(s.table)) {
@@ -73,7 +73,7 @@ private:
         const TableSchema* table = catalog_.find(s.table);
         if (!table) return notFoundTable(s.table);
 
-        // Colonnes cibles : la liste explicite, ou tout le schéma dans l'ordre.
+        // Target columns: the explicit list, or the whole schema in order.
         std::vector<std::size_t> targets;
         if (s.columns.empty()) {
             for (std::size_t i = 0; i < table->columns.size(); ++i) targets.push_back(i);
@@ -98,10 +98,10 @@ private:
         std::vector<bool> provided(table->columns.size(), false);
         for (std::size_t i = 0; i < targets.size(); ++i) {
             const ColumnSchema& col = table->columns[targets[i]];
-            // Pas de ligne courante dans VALUES : toute colonne y est interdite.
+            // No current row inside VALUES: every column is forbidden there.
             LEDGER_TRY(e, bindExpr(*s.values[i], nullptr));
             LEDGER_TRY(fitted, fitToColumn(std::move(e), col, *s.values[i]));
-            // Sans colonne, l'expression a été pliée : c'est une Value.
+            // Without a column, the expression was folded: it is a Value.
             const Value* v = std::get_if<Value>(&fitted->node);
             if (!v) return makeError(ErrorCode::Internal, "INSERT value did not fold to a constant");
             row[targets[i]] = *v;
@@ -165,7 +165,7 @@ private:
         return BoundStatement{BoundDelete{table, std::move(where)}};
     }
 
-    // ---- aides -------------------------------------------------------------
+    // ---- helpers -----------------------------------------------------------
 
     static Result<std::size_t> resolveColumn(const TableSchema& table, const std::string& name) {
         if (auto idx = table.columnIndex(name)) return *idx;
@@ -183,8 +183,8 @@ private:
         return e;
     }
 
-    // Vérifie qu'une expression peut alimenter une colonne ; insère le cast
-    // Int -> Float si besoin ; refuse NULL garanti sur une colonne NOT NULL.
+    // Checks that an expression can feed a column; inserts the Int -> Float
+    // cast when needed; refuses a guaranteed NULL on a NOT NULL column.
     Result<BoundExprPtr> fitToColumn(BoundExprPtr e, const ColumnSchema& col, const ast::Expr& src) {
         if (e->type == DataType::Null) {
             if (col.notNull) {
@@ -196,7 +196,7 @@ private:
         if (e->type == col.type) return e;
         if (e->type == DataType::Int && col.type == DataType::Float) {
             if (const Value* v = std::get_if<Value>(&e->node)) {
-                // Constante : convertie tout de suite plutôt que castée à chaque ligne.
+                // Constant: converted right away rather than cast on every row.
                 LEDGER_TRY(f, Value::real(static_cast<double>(v->asInt())));
                 return std::make_unique<BoundExpr>(BoundExpr{std::move(f), DataType::Float});
             }
@@ -218,11 +218,11 @@ private:
 
     // ---- expressions -------------------------------------------------------
 
-    // `scope` : table dont les colonnes sont visibles, ou nullptr (VALUES).
+    // `scope`: the table whose columns are visible, or nullptr (VALUES).
     Result<BoundExprPtr> bindExpr(const ast::Expr& e, const TableSchema* scope) {
         LEDGER_TRY(bound, bindNode(e, scope));
-        // Pliage : tout sous-arbre sans colonne devient une constante. Une
-        // erreur de données (1/0, débordement) remonte ici, avec position.
+        // Folding: every column-free subtree becomes a constant. A data error
+        // (1/0, overflow) surfaces here, with its position.
         if (!std::holds_alternative<Value>(bound->node) && isConstant(*bound)) {
             auto v = eval(*bound, Row{});
             if (!v.ok()) return errorAt(e, v.error().code, v.error().message);

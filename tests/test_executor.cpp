@@ -12,7 +12,7 @@ using namespace ledger;
 
 namespace {
 
-// Base de test : moteur mémoire + catalogue + exécuteur, avec une table users.
+// Test database: memory engine + catalog + executor, with a users table.
 struct Db {
     MemoryEngine engine;
     Catalog catalog;
@@ -49,7 +49,7 @@ Value t(const char* s) { return Value::text(s); }
 Value b(bool v) { return Value::boolean(v); }
 const Value N = Value::null();
 
-// Colonne `idx` de chaque ligne, pour lire un résultat d'un coup d'œil.
+// Column `idx` of every row, to read a result at a glance.
 std::vector<Value> column(const std::vector<Row>& rows, std::size_t idx) {
     std::vector<Value> out;
     for (const auto& r : rows) out.push_back(r[idx]);
@@ -120,7 +120,7 @@ TEST_CASE("exec WHERE keeps only rows evaluating to TRUE (not NULL)") {
 TEST_CASE("exec ORDER BY: stable, NULL first ascending and last descending") {
     Db db = seeded();
     CHECK(column(db.rows("SELECT id FROM users ORDER BY score"), 0) ==
-          std::vector<Value>{i(2), i(4), i(3), i(1)});  // NULL(2), NULL(4) stables, puis 1.0, 3.5
+          std::vector<Value>{i(2), i(4), i(3), i(1)});  // NULL(2), NULL(4) stable, then 1.0, 3.5
     CHECK(column(db.rows("SELECT id FROM users ORDER BY score DESC"), 0) ==
           std::vector<Value>{i(1), i(3), i(2), i(4)});
     CHECK(column(db.rows("SELECT id FROM users ORDER BY name DESC"), 0) ==
@@ -170,7 +170,7 @@ TEST_CASE("exec UPDATE modifies matching rows and reports the count") {
     const auto r = db.rows("SELECT id, score, active FROM users ORDER BY id");
     CHECK(r[2] == Row{i(3), f(9.5), b(true)});
     CHECK(r[3] == Row{i(4), f(9.5), b(true)});
-    CHECK(r[0] == Row{i(1), f(3.5), b(true)});  // intacte
+    CHECK(r[0] == Row{i(1), f(3.5), b(true)});  // untouched
     CHECK(db.run("UPDATE users SET score = 0 WHERE id = 99").affected == 0);
 }
 
@@ -200,14 +200,14 @@ TEST_CASE("exec UPDATE primary key: allowed when unique, rejected otherwise, not
     CHECK(e.code == ErrorCode::ConstraintViolation);
     CHECK(e.message == "duplicate primary key 3 in table 'users'");
 
-    // Collision entre deux lignes modifiées par la même instruction.
+    // Collision between two rows modified by the same statement.
     e = db.fail("UPDATE users SET id = 42 WHERE id > 2");
     CHECK(e.code == ErrorCode::ConstraintViolation);
     CHECK(e.message == "duplicate primary key 42 in table 'users'");
     CHECK(column(db.rows("SELECT id FROM users ORDER BY id"), 0) ==
-          std::vector<Value>{i(2), i(3), i(4), i(10)});  // rien n'a bougé
+          std::vector<Value>{i(2), i(3), i(4), i(10)});  // nothing moved
 
-    // Se réassigner sa propre clé n'est pas un doublon ; permuter deux clés non plus.
+    // Reassigning one's own key is not a duplicate; neither is swapping two keys.
     CHECK(db.run("UPDATE users SET id = id").affected == 4);
     CHECK(db.run("UPDATE users SET id = id + 100").affected == 4);
     CHECK(column(db.rows("SELECT id FROM users ORDER BY id"), 0) ==
@@ -234,11 +234,11 @@ TEST_CASE("exec DELETE removes matching rows") {
     CHECK(db.run("DELETE FROM users WHERE id = 99").affected == 0);
     CHECK(db.run("DELETE FROM users").affected == 2);
     CHECK(db.count("SELECT * FROM users") == 0);
-    db.run("INSERT INTO users VALUES (1, 'again', NULL, NULL)");  // la clé 1 est libre
+    db.run("INSERT INTO users VALUES (1, 'again', NULL, NULL)");  // key 1 is free
     CHECK(db.count("SELECT * FROM users") == 1);
 }
 
-// ---- erreurs de données à l'exécution --------------------------------------
+// ---- runtime data errors ---------------------------------------------------
 
 TEST_CASE("exec: data errors on a row are reported with the rowid, nothing written") {
     Db db;
@@ -251,7 +251,7 @@ TEST_CASE("exec: data errors on a row are reported with the rowid, nothing writt
 
     e = db.fail("UPDATE p SET a = a / b");
     CHECK(e.message == "row 2: division by zero");
-    CHECK(db.rows("SELECT a FROM p")[0] == Row{i(1)});  // la ligne 1 n'a pas été écrite
+    CHECK(db.rows("SELECT a FROM p")[0] == Row{i(1)});  // row 1 was not written
 
     db.run("INSERT INTO p VALUES (9223372036854775807, 1)");
     e = db.fail("SELECT * FROM p WHERE a + b > 0");
@@ -265,7 +265,7 @@ TEST_CASE("exec: parse and bind errors flow through execute(sql)") {
     CHECK(db.fail("SELECT * FROM users WHERE name + 1 > 0").code == ErrorCode::TypeError);
 }
 
-// ---- bout en bout sur fichiers ---------------------------------------------
+// ---- end to end on files ---------------------------------------------------
 
 TEST_CASE("exec end-to-end on FileEngine: data survives reopen") {
     namespace fs = std::filesystem;

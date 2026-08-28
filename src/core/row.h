@@ -6,7 +6,7 @@
 
 namespace ledger {
 
-// Une ligne = une Value par colonne, dans l'ordre du schéma de la table.
+// A row = one Value per column, in the table's schema order.
 using Row = std::vector<Value>;
 
 }  // namespace ledger

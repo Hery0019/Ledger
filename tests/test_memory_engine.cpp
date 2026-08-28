@@ -80,7 +80,7 @@ TEST_CASE("MemoryEngine: dropTable, loadSchemas, compact") {
     REQUIRE(e.createTable(other).ok());
     auto schemas = e.loadSchemas().value();
     REQUIRE(schemas.size() == 2);
-    CHECK(schemas[0].name == "a");  // ordre alphabétique
+    CHECK(schemas[0].name == "a");  // alphabetical order
     CHECK(schemas[1].name == "t");
     CHECK(e.compact("t").ok());
     REQUIRE(e.dropTable("t").ok());

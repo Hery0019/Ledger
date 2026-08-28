@@ -58,9 +58,9 @@ Result<void> writeWholeFile(const fs::path& path, std::string_view content) {
     return {};
 }
 
-// Noms de périphériques réservés par Windows : un dossier `con` ou `nul` est
-// impossible à créer (ou pire, à supprimer). Refusés sur toutes les plateformes
-// pour que les bases restent portables.
+// Device names reserved by Windows: a `con` or `nul` directory cannot be
+// created (or worse, deleted). Refused on every platform so that databases
+// stay portable.
 bool isReservedName(std::string_view name) {
     static constexpr std::array<std::string_view, 4> kBase{"con", "prn", "aux", "nul"};
     for (const auto r : kBase) {
@@ -75,7 +75,7 @@ bool isReservedName(std::string_view name) {
 
 }  // namespace
 
-// ---- ouverture / fermeture -------------------------------------------------
+// ---- open / close ----------------------------------------------------------
 
 Result<std::unique_ptr<FileEngine>> FileEngine::open(const fs::path& dir) {
     std::error_code ec;
@@ -116,7 +116,7 @@ std::vector<std::string> FileEngine::takeWarnings() {
     return std::exchange(warnings_, {});
 }
 
-// ---- schémas ---------------------------------------------------------------
+// ---- schemas ---------------------------------------------------------------
 
 Result<std::vector<TableSchema>> FileEngine::loadSchemas() {
     const std::lock_guard<std::mutex> lock(mu_);
@@ -126,7 +126,7 @@ Result<std::vector<TableSchema>> FileEngine::loadSchemas() {
         const std::string name = entry.path().filename().string();
         if (tables_.contains(name)) continue;
         const fs::path schemaPath = entry.path() / kSchemaFile;
-        if (!fs::exists(schemaPath)) continue;  // dossier étranger, ignoré
+        if (!fs::exists(schemaPath)) continue;  // foreign directory, ignored
         LEDGER_TRY(content, readWholeFile(schemaPath));
         auto schema = codec::decodeSchema(name, content);
         if (!schema.ok()) {
@@ -167,7 +167,7 @@ Result<void> FileEngine::createTable(const TableSchema& schema) {
 
     Table t;
     t.schema = schema;
-    t.loaded = true;  // table neuve : rien à rejouer
+    t.loaded = true;  // brand-new table: nothing to replay
     tables_.emplace(schema.name, std::move(t));
     return {};
 }
@@ -184,7 +184,7 @@ Result<void> FileEngine::dropTable(std::string_view table) {
     return {};
 }
 
-// ---- chargement des lignes -------------------------------------------------
+// ---- row loading -----------------------------------------------------------
 
 Result<FileEngine::Table*> FileEngine::loaded(std::string_view table) {
     const auto it = tables_.find(table);
@@ -210,7 +210,7 @@ Result<void> FileEngine::loadRows(Table& t) {
     t.nextId = 1;
     t.tombstones = 0;
 
-    // Dernière ligne sans '\n' = append interrompu : ignorée, signalée.
+    // Last line without '\n' = interrupted append: dropped, reported.
     std::string_view rest = content;
     if (!rest.empty() && rest.back() != '\n') {
         const std::size_t cut = rest.rfind('\n');
@@ -218,8 +218,8 @@ Result<void> FileEngine::loadRows(Table& t) {
         warnings_.push_back(path.string() + ": ignoring truncated last line '" +
                             std::string(partial.substr(0, 40)) + "'");
         rest = cut == std::string_view::npos ? std::string_view{} : rest.substr(0, cut + 1);
-        // On retire physiquement le fragment : sinon le prochain append se
-        // collerait à sa suite et corromprait le fichier pour de bon.
+        // The fragment is physically removed: otherwise the next append would
+        // be glued to it and corrupt the file for good.
         std::error_code ec;
         fs::resize_file(path, rest.size(), ec);
         if (ec) return ioError("cannot truncate partial line", path, ec);
@@ -254,8 +254,8 @@ Result<void> FileEngine::loadRows(Table& t) {
             }
             ++t.tombstones;
         } else {
-            // Une réinsertion du même id est la version post-update : le
-            // tombstone qui la précède a déjà retiré l'ancienne.
+            // A re-insertion of the same id is the post-update version: the
+            // tombstone before it already removed the old one.
             if (t.rows.contains(r.id)) {
                 return makeError(ErrorCode::Corruption,
                                  where + "duplicate live row " + std::to_string(r.id));
@@ -270,7 +270,7 @@ Result<void> FileEngine::loadRows(Table& t) {
     return {};
 }
 
-// ---- écriture --------------------------------------------------------------
+// ---- writing ---------------------------------------------------------------
 
 Result<void> FileEngine::appendLine(Table& t, const std::string& line) {
     const fs::path path = tableDir(t.schema.name) / kRowsFile;
@@ -316,7 +316,7 @@ Result<void> FileEngine::update(std::string_view table, RowId id, const Row& row
     if (row.size() != t->schema.columns.size()) {
         return makeError(ErrorCode::Internal, "update: wrong number of values");
     }
-    // Tombstone puis nouvelle version avec le même rowid.
+    // Tombstone, then the new version with the same rowid.
     LEDGER_TRY_VOID(appendLine(*t, codec::encodeTombstone(id)));
     LEDGER_TRY_VOID(appendLine(*t, codec::encodeInsert(id, row)));
     it->second = row;
@@ -362,8 +362,8 @@ Result<void> FileEngine::rewrite(Table& t) {
     }
     LEDGER_TRY_VOID(writeWholeFile(tmp, content));
 
-    // Le handle d'append pointe sur l'ancien fichier : on le ferme avant le
-    // rename (obligatoire sous Windows), on le rouvrira à la demande.
+    // The append handle points at the old file: close it before the rename
+    // (mandatory on Windows); it is reopened on demand.
     closeFile(t);
     std::error_code ec;
     fs::rename(tmp, path, ec);

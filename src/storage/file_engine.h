@@ -12,26 +12,26 @@
 
 namespace ledger {
 
-// Moteur fichiers texte : un dossier par table sous le dossier de la base.
+// Text-file engine: one directory per table under the database directory.
 //
-//   <base>/LOCK               présent tant qu'un processus a la base ouverte
+//   <base>/LOCK               present while a process has the database open
 //   <base>/<table>/schema.txt
-//   <base>/<table>/rows.txt   append-only, voir storage/codec.h
+//   <base>/<table>/rows.txt   append-only, see storage/codec.h
 //
-// Modèle : au premier accès, rows.txt est rejoué intégralement en mémoire
-// (map rowid -> Row) ; ensuite chaque écriture est ajoutée au fichier (flush,
-// pas de fsync : on se protège d'un crash du programme, pas d'une coupure de
-// courant) et appliquée en mémoire. Quand les tombstones dépassent un seuil,
-// le fichier est réécrit sans eux (compaction, via fichier temporaire + rename).
+// Model: on first access, rows.txt is fully replayed into memory (map rowid
+// -> Row); afterwards every write is appended to the file (flush, no fsync:
+// we guard against a program crash, not a power failure) and applied in
+// memory. When tombstones exceed a threshold, the file is rewritten without
+// them (compaction, via temporary file + rename).
 //
-// Une dernière ligne tronquée (crash pendant un append) est ignorée et
-// signalée dans warnings() ; toute autre anomalie est une Corruption.
+// A truncated last line (crash during an append) is dropped and reported in
+// warnings(); any other anomaly is a Corruption.
 //
-// Thread-safe (un mutex pour toute la base) ; mono-processus (fichier LOCK).
+// Thread-safe (one mutex for the whole database); single process (LOCK file).
 class FileEngine final : public IStorageEngine {
 public:
-    // Crée le dossier s'il n'existe pas, prend le verrou. IoError si la base
-    // est déjà ouverte par un autre processus.
+    // Creates the directory if needed, takes the lock. IoError if the database
+    // is already open in another process.
     static Result<std::unique_ptr<FileEngine>> open(const std::filesystem::path& dir);
     ~FileEngine() override;
 
@@ -48,13 +48,13 @@ public:
     Result<void> compact(std::string_view table) override;
     Result<std::vector<TableSchema>> loadSchemas() override;
 
-    // Avertissements accumulés (lignes tronquées ignorées...). Vidés à l'appel.
+    // Accumulated warnings (dropped truncated lines...). Cleared on call.
     std::vector<std::string> takeWarnings();
 
     [[nodiscard]] const std::filesystem::path& directory() const noexcept { return dir_; }
 
-    // Seuil de compaction automatique : tombstones > kCompactMinTombstones
-    // ET tombstones > lignes vivantes.
+    // Automatic compaction threshold: tombstones > kCompactMinTombstones
+    // AND tombstones > live rows.
     static constexpr std::size_t kCompactMinTombstones = 1000;
 
 private:
@@ -66,19 +66,19 @@ private:
         RowId nextId = 1;
         std::size_t tombstones = 0;
         bool loaded = false;
-        std::FILE* out = nullptr;  // rows.txt ouvert en append, nullptr tant que non chargé
+        std::FILE* out = nullptr;  // rows.txt opened for append, nullptr until loaded
     };
 
     [[nodiscard]] std::filesystem::path tableDir(std::string_view table) const;
-    Result<Table*> loaded(std::string_view table);  // charge rows.txt si besoin
+    Result<Table*> loaded(std::string_view table);  // loads rows.txt if needed
     Result<void> loadRows(Table& t);
     Result<void> appendLine(Table& t, const std::string& line);
-    Result<void> rewrite(Table& t);  // compaction effective
+    Result<void> rewrite(Table& t);  // actual compaction
     Result<void> maybeCompact(Table& t);
     static void closeFile(Table& t) noexcept;
 
     std::filesystem::path dir_;
-    std::map<std::string, Table, std::less<>> tables_;  // toutes les tables connues (schéma chargé)
+    std::map<std::string, Table, std::less<>> tables_;  // every known table (schema loaded)
     std::vector<std::string> warnings_;
     std::mutex mu_;
 };

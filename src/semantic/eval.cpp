@@ -24,8 +24,8 @@ double toDouble(const Value& v) noexcept {
     return v.type() == DataType::Int ? static_cast<double>(v.asInt()) : v.asFloat();
 }
 
-// Arithmétique entière vérifiée. Portable (pas de __builtin_*_overflow) : les
-// bornes sont testées avant l'opération, jamais après un wrap.
+// Checked integer arithmetic. Portable (no __builtin_*_overflow): bounds are
+// tested before the operation, never after a wrap.
 Result<Value> intArith(BinaryOp op, std::int64_t a, std::int64_t b) {
     switch (op) {
         case BinaryOp::Add:
@@ -37,7 +37,7 @@ Result<Value> intArith(BinaryOp op, std::int64_t a, std::int64_t b) {
         case BinaryOp::Div:
             if (b == 0) return divisionByZero();
             if (a == kIntMin && b == -1) return overflow("/");
-            return Value::integer(a / b);  // troncature vers zéro, comme SQL
+            return Value::integer(a / b);  // truncation toward zero, like SQL
         default:
             return makeError(ErrorCode::Internal, "intArith: not an arithmetic operator");
     }
@@ -56,14 +56,14 @@ Result<Value> floatArith(BinaryOp op, double a, double b) {
     }
 }
 
-// Multiplication : on passe par unsigned (wrap défini) puis on vérifie par
-// division inverse ; un `a * b` signé qui déborde serait un UB.
+// Multiplication: go through unsigned (defined wrap) then verify by inverse
+// division; a signed `a * b` that overflows would be UB.
 Result<Value> checkedMul(std::int64_t a, std::int64_t b) {
     if (a == 0 || b == 0) return Value::integer(0);
     if ((a == -1 && b == kIntMin) || (b == -1 && a == kIntMin)) return overflow("*");
     const auto ua = static_cast<std::uint64_t>(a);
     const auto ub = static_cast<std::uint64_t>(b);
-    const std::uint64_t ur = ua * ub;  // wrap défini pour unsigned
+    const std::uint64_t ur = ua * ub;  // wrap is defined for unsigned
     const auto r = static_cast<std::int64_t>(ur);
     if (r / b != a) return overflow("*");
     return Value::integer(r);
@@ -105,9 +105,8 @@ Result<Value> evalUnary(const BoundUnary& u, const Row& row) {
 Result<Value> evalLogical(BinaryOp op, const BoundBinary& b, const Row& row) {
     LEDGER_TRY(l, eval(*b.lhs, row));
     LEDGER_TRY(r, eval(*b.rhs, row));
-    // Logique à trois états. On évalue les deux côtés : pas de court-circuit,
-    // pour qu'une erreur de données (division par zéro) ne dépende pas de
-    // l'ordre des opérandes.
+    // Three-valued logic. Both sides are evaluated: no short-circuit, so that
+    // a data error (division by zero) does not depend on operand order.
     const bool lNull = l.isNull();
     const bool rNull = r.isNull();
     if (op == BinaryOp::And) {
@@ -142,7 +141,7 @@ Result<Value> evalBinary(const BoundBinary& b, const Row& row) {
 Result<Value> evalCast(const BoundCast& c, const Row& row) {
     LEDGER_TRY(v, eval(*c.operand, row));
     if (v.isNull() || v.type() == c.to) return v;
-    // Seule conversion admise : Int -> Float.
+    // The only allowed conversion: Int -> Float.
     return Value::real(static_cast<double>(v.asInt()));
 }
 

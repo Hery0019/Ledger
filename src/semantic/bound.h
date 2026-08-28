@@ -13,18 +13,18 @@
 #include "semantic/catalog.h"
 #include "sql/ast.h"
 
-// Plan lié : ce que produit le binder à partir d'un ast::Statement. Toutes les
-// références sont résolues (colonnes -> indices, tables -> schémas) et tous les
-// types sont vérifiés. L'exécuteur déroule ce plan sans jamais avoir à lever
-// une erreur sémantique ; les seules erreurs possibles à l'exécution dépendent
-// des données (division par zéro, débordement, contrainte violée).
+// Bound plan: what the binder produces from an ast::Statement. Every
+// reference is resolved (columns -> indices, tables -> schemas) and every type
+// is checked. The executor runs this plan without ever having to raise a
+// semantic error; the only possible runtime errors depend on the data
+// (division by zero, overflow, violated constraint).
 namespace ledger {
 
 struct BoundExpr;
 using BoundExprPtr = std::unique_ptr<BoundExpr>;
 
 struct BoundColumn {
-    std::size_t index;  // dans la Row de la table courante
+    std::size_t index;  // into the current table's Row
 };
 
 struct BoundUnary {
@@ -43,25 +43,25 @@ struct BoundIsNull {
     bool negated;
 };
 
-// Seule conversion implicite du moteur : Int -> Float (promotion sans perte
-// notable). Insérée par le binder quand une expression Int alimente une
-// colonne Float. NULL traverse inchangé.
+// The engine's only implicit conversion: Int -> Float (promotion with no
+// notable loss). Inserted by the binder when an Int expression feeds a Float
+// column. NULL passes through unchanged.
 struct BoundCast {
     BoundExprPtr operand;
-    DataType to;  // toujours DataType::Float en v1
+    DataType to;  // always DataType::Float in v1
 };
 
 struct BoundExpr {
     std::variant<Value, BoundColumn, BoundUnary, BoundBinary, BoundIsNull, BoundCast> node;
-    // Type statique. DataType::Null signifie « toujours NULL » (ex. le littéral
-    // NULL, ou NULL + NULL). Une expression de type Int peut quand même
-    // produire NULL à l'exécution (colonne nullable) : Null n'est pas un
-    // sous-type, c'est le type de l'absence garantie.
+    // Static type. DataType::Null means "always NULL" (e.g. the NULL literal,
+    // or NULL + NULL). An expression of type Int can still produce NULL at
+    // runtime (nullable column): Null is not a subtype, it is the type of
+    // guaranteed absence.
     DataType type;
 };
 
 struct BoundCreateTable {
-    TableSchema schema;  // validé : noms uniques, <= 1 PRIMARY KEY, PK => NOT NULL
+    TableSchema schema;  // validated: unique names, <= 1 PRIMARY KEY, PK => NOT NULL
 };
 
 struct BoundDropTable {
@@ -70,7 +70,7 @@ struct BoundDropTable {
 
 struct BoundInsert {
     const TableSchema* table;
-    Row row;  // complète, dans l'ordre du schéma, types déjà conformes
+    Row row;  // complete, in schema order, types already conforming
 };
 
 struct BoundOrderBy {
@@ -80,15 +80,15 @@ struct BoundOrderBy {
 
 struct BoundSelect {
     const TableSchema* table;
-    std::vector<std::size_t> projection;  // jamais vide (`*` est développé)
-    BoundExprPtr where;                   // nullptr = toutes les lignes ; type Bool ou Null
+    std::vector<std::size_t> projection;  // never empty (`*` is expanded)
+    BoundExprPtr where;                   // nullptr = every row; type Bool or Null
     std::optional<BoundOrderBy> orderBy;
     std::optional<std::int64_t> limit;
 };
 
 struct BoundUpdate {
     const TableSchema* table;
-    std::vector<std::pair<std::size_t, BoundExprPtr>> assignments;  // type conforme à la colonne
+    std::vector<std::pair<std::size_t, BoundExprPtr>> assignments;  // type conforms to the column
     BoundExprPtr where;
 };
 

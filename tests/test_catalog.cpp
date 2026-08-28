@@ -18,7 +18,7 @@ TEST_CASE("TableSchema resolves columns by name") {
     CHECK(t.columnIndex("id") == 0);
     CHECK(t.columnIndex("score") == 2);
     CHECK_FALSE(t.columnIndex("missing").has_value());
-    CHECK_FALSE(t.columnIndex("ID").has_value());  // le repli est fait en amont
+    CHECK_FALSE(t.columnIndex("ID").has_value());  // folding happens upstream
     CHECK(t.primaryKeyIndex() == 0);
     CHECK_FALSE(TableSchema{"t", {ColumnSchema{"a", DataType::Int, false, false}}}
                     .primaryKeyIndex().has_value());

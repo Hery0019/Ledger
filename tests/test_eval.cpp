@@ -8,8 +8,8 @@ using namespace ledger;
 using ast::BinaryOp;
 using ast::UnaryOp;
 
-// Construction directe d'expressions liées, sans passer par le binder : on
-// teste ici la sémantique des opérateurs seule.
+// Direct construction of bound expressions, bypassing the binder: here we
+// test operator semantics alone.
 namespace {
 
 BoundExprPtr lit(Value v) {
@@ -54,7 +54,7 @@ constexpr auto kMax = std::numeric_limits<std::int64_t>::max();
 
 }  // namespace
 
-// ---- feuilles --------------------------------------------------------------
+// ---- leaves ----------------------------------------------------------------
 
 TEST_CASE("eval: constants and columns") {
     CHECK(ev(i(7)) == Value::integer(7));
@@ -65,14 +65,14 @@ TEST_CASE("eval: constants and columns") {
     CHECK(ev(col(1, DataType::Text), row) == Value::text("x"));
 }
 
-// ---- arithmétique ----------------------------------------------------------
+// ---- arithmetic ------------------------------------------------------------
 
 TEST_CASE("eval: integer arithmetic") {
     CHECK(ev(bin(BinaryOp::Add, i(2), i(3))) == Value::integer(5));
     CHECK(ev(bin(BinaryOp::Sub, i(2), i(3))) == Value::integer(-1));
     CHECK(ev(bin(BinaryOp::Mul, i(-4), i(3))) == Value::integer(-12));
     CHECK(ev(bin(BinaryOp::Div, i(7), i(2))) == Value::integer(3));
-    CHECK(ev(bin(BinaryOp::Div, i(-7), i(2))) == Value::integer(-3));  // troncature vers zéro
+    CHECK(ev(bin(BinaryOp::Div, i(-7), i(2))) == Value::integer(-3));  // truncation toward zero
     CHECK(ev(bin(BinaryOp::Mul, i(0), i(kMin))) == Value::integer(0));
 }
 
@@ -87,7 +87,7 @@ TEST_CASE("eval: integer overflow is an error, never a wrap") {
     CHECK(err(bin(BinaryOp::Div, i(kMin), i(-1))).message == "integer overflow in '/'");
     CHECK(err(un(UnaryOp::Neg, i(kMin))).message == "integer overflow in '-'");
     CHECK(err(bin(BinaryOp::Add, i(kMax), i(1))).code == ErrorCode::TypeError);
-    // Les bornes exactes passent.
+    // The exact bounds pass.
     CHECK(ev(bin(BinaryOp::Add, i(kMax - 1), i(1))) == Value::integer(kMax));
     CHECK(ev(bin(BinaryOp::Sub, i(kMin + 1), i(1))) == Value::integer(kMin));
     CHECK(ev(bin(BinaryOp::Mul, i(kMax), i(1))) == Value::integer(kMax));
@@ -126,10 +126,10 @@ TEST_CASE("eval: unary minus") {
 TEST_CASE("eval: arithmetic with NULL yields NULL") {
     CHECK(ev(bin(BinaryOp::Add, null(), i(1))).isNull());
     CHECK(ev(bin(BinaryOp::Div, i(1), null())).isNull());
-    CHECK(ev(bin(BinaryOp::Div, null(), i(0))).isNull());  // NULL avant la division
+    CHECK(ev(bin(BinaryOp::Div, null(), i(0))).isNull());  // NULL before the division
 }
 
-// ---- comparaisons ----------------------------------------------------------
+// ---- comparisons -----------------------------------------------------------
 
 TEST_CASE("eval: comparisons") {
     CHECK(ev(bin(BinaryOp::Eq, i(1), i(1))) == Value::boolean(true));
@@ -152,7 +152,7 @@ TEST_CASE("eval: comparison with NULL is NULL, IS NULL is a real boolean") {
     CHECK(ev(isNull(i(1), true)) == Value::boolean(true));
 }
 
-// ---- logique à trois états -------------------------------------------------
+// ---- three-valued logic ----------------------------------------------------
 
 TEST_CASE("eval: three-valued AND") {
     CHECK(ev(bin(BinaryOp::And, b(true), b(true))) == Value::boolean(true));
@@ -183,7 +183,7 @@ TEST_CASE("eval: logical operators do not short-circuit data errors") {
     CHECK(err(bin(BinaryOp::Or, b(true), bin(BinaryOp::Div, i(1), i(0)))).message == "division by zero");
 }
 
-// ---- cast et constantes ----------------------------------------------------
+// ---- cast and constants ----------------------------------------------------
 
 TEST_CASE("eval: Int -> Float cast") {
     CHECK(ev(cast(i(3))) == Value::real(3.0).value());
