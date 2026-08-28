@@ -270,6 +270,47 @@ std::string formatTable(const QueryResult& result, TableStyle style) {
     return out;
 }
 
+std::string formatLogo(TableStyle style) {
+    // "ANSI Shadow" block letters: solid glyphs with a shadow drawn in
+    // double-line box characters.
+    static constexpr std::string_view kBlock[] = {
+        "██╗     ███████╗██████╗  ██████╗ ███████╗██████╗ ",
+        "██║     ██╔════╝██╔══██╗██╔════╝ ██╔════╝██╔══██╗",
+        "██║     █████╗  ██║  ██║██║  ███╗█████╗  ██████╔╝",
+        "██║     ██╔══╝  ██║  ██║██║   ██║██╔══╝  ██╔══██╗",
+        "███████╗███████╗██████╔╝╚██████╔╝███████╗██║  ██║",
+        "╚══════╝╚══════╝╚═════╝  ╚═════╝ ╚══════╝╚═╝  ╚═╝",
+    };
+    static constexpr std::string_view kAscii[] = {
+        " _     _____ ____   ____ _____ ____  ",
+        "| |   | ____|  _ \\ / ___| ____|  _ \\ ",
+        "| |   |  _| | | | | |  _|  _| | |_) |",
+        "| |___| |__| |_| | |_| | |___|  _ < ",
+        "|_____|_____|____/ \\____|_____|_| \\_\\",
+    };
+    // Top-to-bottom gradient, 256-colour palette: bright cyan down to deep blue.
+    static constexpr std::string_view kGradient[] = {
+        "\x1b[38;5;51m", "\x1b[38;5;45m", "\x1b[38;5;39m",
+        "\x1b[38;5;33m", "\x1b[38;5;27m", "\x1b[38;5;21m",
+    };
+
+    std::string out;
+    if (style.unicode) {
+        for (std::size_t i = 0; i < std::size(kBlock); ++i) {
+            if (style.color) out += kGradient[i];
+            out += kBlock[i];
+            if (style.color) out += ansi::reset;
+            out += '\n';
+        }
+    } else {
+        for (const auto line : kAscii) {
+            out += line;
+            out += '\n';
+        }
+    }
+    return out;
+}
+
 std::string formatSummary(const QueryResult& result) {
     switch (result.kind) {
         case ResultKind::Select:

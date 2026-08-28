@@ -106,4 +106,9 @@ std::string formatTable(const QueryResult& result, TableStyle style = TableStyle
 // Status line: "3 rows", "1 row affected", "ok".
 std::string formatSummary(const QueryResult& result);
 
+// The big LEDGER banner shown when the REPL starts. Block letters in the
+// fancy style (with a colour gradient when colours are on), plain ASCII art
+// otherwise. Always ends with a newline.
+std::string formatLogo(TableStyle style);
+
 }  // namespace ledger
