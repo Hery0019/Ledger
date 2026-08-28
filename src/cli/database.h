@@ -37,6 +37,20 @@ private:
     Executor executor_;
 };
 
+// Where a database named on the command line lives.
+//
+//  - a bare name (`mydb`, no path separator) goes under the data root:
+//    `<root>/mydb`, where <root> is the LEDGER_DATA_DIR environment variable
+//    if set, otherwise `data/` relative to the current directory. This keeps
+//    every database in one place that the repository ignores;
+//  - anything containing a path separator (`./here`, `C:\x\y`, `../db`) is
+//    used as is.
+//
+// `envRoot` is the value of LEDGER_DATA_DIR (nullptr when unset).
+std::filesystem::path resolveDatabasePath(std::string_view arg, const char* envRoot);
+
+inline constexpr std::string_view kDefaultDataDir = "data";
+
 // Splits a text into statements on the `;` characters that sit outside a
 // '...' string and outside a `--` comment. The `;` is not kept. Empty
 // statements (whitespace / comments only) are omitted. A trailing `;` is
