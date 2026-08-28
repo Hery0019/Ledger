@@ -27,8 +27,14 @@ BoundExprPtr cloneExpr(const BoundExpr& e) {
                 return BoundBinary{n.op, cloneExpr(*n.lhs), cloneExpr(*n.rhs)};
             } else if constexpr (std::is_same_v<N, BoundIsNull>) {
                 return BoundIsNull{cloneExpr(*n.operand), n.negated};
-            } else {
+            } else if constexpr (std::is_same_v<N, BoundCast>) {
                 return BoundCast{cloneExpr(*n.operand), n.to};
+            } else if constexpr (std::is_same_v<N, BoundInList>) {
+                BoundInList out{cloneExpr(*n.value), {}, n.negated};
+                for (const auto& item : n.items) out.items.push_back(cloneExpr(*item));
+                return out;
+            } else {
+                return BoundLike{cloneExpr(*n.value), cloneExpr(*n.pattern), n.negated};
             }
         },
         e.node);

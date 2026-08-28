@@ -34,7 +34,7 @@ ExprPtr expr(std::string_view e) {
 // Parenthesized serialization: makes the tree shape readable and comparable.
 std::string show(const Expr& e) {
     return std::visit(
-        [](const auto& n) -> std::string {
+        [&](const auto& n) -> std::string {
             using N = std::decay_t<decltype(n)>;
             if constexpr (std::is_same_v<N, Literal>) {
                 if (n.value.isNull()) return "NULL";
@@ -49,6 +49,9 @@ std::string show(const Expr& e) {
                        show(*n.rhs) + ")";
             } else if constexpr (std::is_same_v<N, IsNull>) {
                 return "(" + show(*n.operand) + (n.negated ? " IS NOT NULL)" : " IS NULL)");
+            } else if constexpr (std::is_same_v<N, InList> || std::is_same_v<N, Between> ||
+                                 std::is_same_v<N, Like>) {
+                return "(" + exprToString(e) + ")";
             } else {
                 std::string s = n.name + "(";
                 if (n.star) s += "*";

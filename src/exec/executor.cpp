@@ -413,6 +413,20 @@ Result<QueryResult> Executor::run(const BoundSelect& s) {
             return false;
         });
     }
+    // DISTINCT: keep the first occurrence of every projected row (after the
+    // sort, so "first" is well defined when ORDER BY is present).
+    if (s.distinct) {
+        std::map<Row, bool, RowLess> seen;
+        std::vector<Item> unique;
+        for (auto& item : items) {
+            if (seen.emplace(item.projected, true).second) unique.push_back(std::move(item));
+        }
+        items = std::move(unique);
+    }
+    if (s.offset) {
+        const auto skip = std::min(static_cast<std::size_t>(*s.offset), items.size());
+        items.erase(items.begin(), items.begin() + static_cast<std::ptrdiff_t>(skip));
+    }
     if (s.limit && static_cast<std::size_t>(*s.limit) < items.size()) {
         items.resize(static_cast<std::size_t>(*s.limit));
     }

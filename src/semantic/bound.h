@@ -51,8 +51,23 @@ struct BoundCast {
     DataType to;  // always DataType::Float in v1
 };
 
+// `value [NOT] IN (items...)`: NULL if value is NULL, or if no item matches
+// and one of them is NULL.
+struct BoundInList {
+    BoundExprPtr value;
+    std::vector<BoundExprPtr> items;
+    bool negated;
+};
+
+// `value [NOT] LIKE pattern` over TEXT: `%` any sequence, `_` one character.
+struct BoundLike {
+    BoundExprPtr value;
+    BoundExprPtr pattern;
+    bool negated;
+};
+
 struct BoundExpr {
-    std::variant<Value, BoundColumn, BoundUnary, BoundBinary, BoundIsNull, BoundCast> node;
+    std::variant<Value, BoundColumn, BoundUnary, BoundBinary, BoundIsNull, BoundCast, BoundInList, BoundLike> node;
     // Static type. DataType::Null means "always NULL" (e.g. the NULL literal,
     // or NULL + NULL). An expression of type Int can still produce NULL at
     // runtime (nullable column): Null is not a subtype, it is the type of
@@ -164,6 +179,8 @@ struct BoundSelect {
     BoundExprPtr where;                     // nullptr = every row; type Bool or Null
     std::vector<BoundOrderBy> orderBy;      // lexicographic, first key first
     std::optional<std::int64_t> limit;
+    std::optional<std::int64_t> offset;
+    bool distinct = false;                  // drop duplicate projected rows (first kept)
 
     bool aggregated = false;
     std::vector<BoundExprPtr> groupBy;      // evaluated on source rows

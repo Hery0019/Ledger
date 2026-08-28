@@ -48,7 +48,8 @@ int precedence(const Expr& e) {
                 return 0;
             } else if constexpr (std::is_same_v<N, Unary>) {
                 return n.op == UnaryOp::Not ? 3 : 7;
-            } else if constexpr (std::is_same_v<N, IsNull>) {
+            } else if constexpr (std::is_same_v<N, IsNull> || std::is_same_v<N, InList> ||
+                                 std::is_same_v<N, Between> || std::is_same_v<N, Like>) {
                 return 4;
             } else {
                 return 8;  // Literal, ColumnRef, Call
@@ -98,6 +99,24 @@ void render(const Expr& e, std::string& out, int parentPrecedence) {
             } else if constexpr (std::is_same_v<N, IsNull>) {
                 render(*n.operand, out, mine + 1);
                 out += n.negated ? " IS NOT NULL" : " IS NULL";
+            } else if constexpr (std::is_same_v<N, InList>) {
+                render(*n.value, out, mine + 1);
+                out += n.negated ? " NOT IN (" : " IN (";
+                for (std::size_t i = 0; i < n.items.size(); ++i) {
+                    if (i) out += ", ";
+                    render(*n.items[i], out, 0);
+                }
+                out += ')';
+            } else if constexpr (std::is_same_v<N, Between>) {
+                render(*n.value, out, mine + 1);
+                out += n.negated ? " NOT BETWEEN " : " BETWEEN ";
+                render(*n.low, out, mine + 1);
+                out += " AND ";
+                render(*n.high, out, mine + 1);
+            } else if constexpr (std::is_same_v<N, Like>) {
+                render(*n.value, out, mine + 1);
+                out += n.negated ? " NOT LIKE " : " LIKE ";
+                render(*n.pattern, out, mine + 1);
             } else {
                 out += n.name;
                 out += '(';

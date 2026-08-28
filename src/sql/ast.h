@@ -71,8 +71,30 @@ struct Call {
     bool star;  // `count(*)`: no argument, counts rows
 };
 
+// `x [NOT] IN (a, b, ...)`
+struct InList {
+    ExprPtr value;
+    std::vector<ExprPtr> items;  // never empty
+    bool negated;
+};
+
+// `x [NOT] BETWEEN low AND high` (inclusive)
+struct Between {
+    ExprPtr value;
+    ExprPtr low;
+    ExprPtr high;
+    bool negated;
+};
+
+// `x [NOT] LIKE pattern` (`%` any sequence, `_` any single character)
+struct Like {
+    ExprPtr value;
+    ExprPtr pattern;
+    bool negated;
+};
+
 struct Expr {
-    std::variant<Literal, ColumnRef, Unary, Binary, IsNull, Call> node;
+    std::variant<Literal, ColumnRef, Unary, Binary, IsNull, Call, InList, Between, Like> node;
     // Position of the expression's first token, for binder error messages.
     std::size_t line;
     std::size_t column;
@@ -131,6 +153,7 @@ struct OrderBy {
 };
 
 struct Select {
+    bool distinct;                  // `SELECT DISTINCT`
     bool star;                      // `SELECT *`
     std::vector<SelectItem> items;  // empty when star
     TableRef from;
@@ -139,7 +162,8 @@ struct Select {
     std::vector<ExprPtr> groupBy;   // empty if absent
     ExprPtr having;                 // nullptr if absent
     std::vector<OrderBy> orderBy;   // empty if absent
-    std::optional<std::int64_t> limit;  // >= 0 if present
+    std::optional<std::int64_t> limit;   // >= 0 if present
+    std::optional<std::int64_t> offset;  // >= 0 if present
 };
 
 struct Update {

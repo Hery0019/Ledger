@@ -174,9 +174,9 @@ private:
             text.pop_back();
         }
         Select query = std::get<Select>(std::move(stmt));
-        if (!query.orderBy.empty() || query.limit) {
+        if (!query.orderBy.empty() || query.limit || query.offset) {
             return makeError(ErrorCode::SyntaxError,
-                             "view '" + name + "': ORDER BY and LIMIT are not allowed in a view");
+                             "view '" + name + "': ORDER BY, LIMIT and OFFSET are not allowed in a view");
         }
         if (!query.groupBy.empty() || query.having) {
             return makeError(ErrorCode::SyntaxError,
@@ -226,6 +226,7 @@ private:
     Result<Statement> select() {
         advance();  // SELECT
         Select s;
+        s.distinct = accept(TokenKind::KwDistinct);
         s.star = accept(TokenKind::Star);
         if (!s.star) {
             do {
@@ -298,14 +299,25 @@ private:
             } while (accept(TokenKind::Comma));
         }
 
-        if (accept(TokenKind::KwLimit)) {
-            // Unsigned integer literal only: `LIMIT -1` or `LIMIT n` makes no
-            // sense in v1, and refusing it here saves the binder a case.
-            if (!at(TokenKind::Integer)) return unexpected("non-negative integer after LIMIT");
+        // LIMIT n [OFFSET m] | OFFSET m. Unsigned integer literals only:
+        // `LIMIT -1` or `LIMIT n` makes no sense, and refusing it here saves
+        // the binder a case.
+        auto count = [&](const char* clause) -> Result<std::int64_t> {
+            if (!at(TokenKind::Integer)) {
+                return unexpected(std::string("non-negative integer after ") + clause);
+            }
             const Token& tok = advance();
             auto v = Value::fromText(DataType::Int, tok.text);
             if (!v.ok()) return errorAt(tok, v.error().message);
-            s.limit = v.value().asInt();
+            return v.value().asInt();
+        };
+        if (accept(TokenKind::KwLimit)) {
+            LEDGER_TRY(n, count("LIMIT"));
+            s.limit = n;
+        }
+        if (accept(TokenKind::KwOffset)) {
+            LEDGER_TRY(n, count("OFFSET"));
+            s.offset = n;
         }
 
         return Statement{std::move(s)};
@@ -418,11 +430,37 @@ private:
     }
 
     // Non-associative: `a = b = c` and `a IS NULL = b` are rejected.
+    // Also parses the predicates at this level: [NOT] IN, [NOT] BETWEEN,
+    // [NOT] LIKE (their operands are additive expressions, so BETWEEN's AND
+    // is never taken for a logical AND).
     Result<ExprPtr> comparison() {
         const Token& start = peek();
         LEDGER_TRY(lhs, additive());
 
-        if (accept(TokenKind::KwIs)) {
+        const bool negatedPredicate =
+            at(TokenKind::KwNot) && (peekAhead(1).kind == TokenKind::KwIn ||
+                                     peekAhead(1).kind == TokenKind::KwBetween ||
+                                     peekAhead(1).kind == TokenKind::KwLike);
+        if (negatedPredicate) advance();  // NOT
+
+        if (accept(TokenKind::KwIn)) {
+            LEDGER_TRY_VOID(expect(TokenKind::LParen));
+            InList in{std::move(lhs), {}, negatedPredicate};
+            do {
+                LEDGER_TRY(item, expression());
+                in.items.push_back(std::move(item));
+            } while (accept(TokenKind::Comma));
+            LEDGER_TRY_VOID(expect(TokenKind::RParen));
+            lhs = make(std::move(in), start);
+        } else if (accept(TokenKind::KwBetween)) {
+            LEDGER_TRY(low, additive());
+            LEDGER_TRY_VOID(expect(TokenKind::KwAnd));
+            LEDGER_TRY(high, additive());
+            lhs = make(Between{std::move(lhs), std::move(low), std::move(high), negatedPredicate}, start);
+        } else if (accept(TokenKind::KwLike)) {
+            LEDGER_TRY(pattern, additive());
+            lhs = make(Like{std::move(lhs), std::move(pattern), negatedPredicate}, start);
+        } else if (accept(TokenKind::KwIs)) {
             const bool negated = accept(TokenKind::KwNot);
             LEDGER_TRY_VOID(expect(TokenKind::KwNull));
             lhs = make(IsNull{std::move(lhs), negated}, start);
@@ -434,7 +472,8 @@ private:
             return lhs;
         }
 
-        if (comparisonOp(peek().kind) || at(TokenKind::KwIs)) {
+        if (comparisonOp(peek().kind) || at(TokenKind::KwIs) || at(TokenKind::KwIn) ||
+            at(TokenKind::KwBetween) || at(TokenKind::KwLike)) {
             return errorAt(peek(), "comparison operators cannot be chained; use parentheses");
         }
         return lhs;
