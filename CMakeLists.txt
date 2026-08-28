@@ -23,6 +23,12 @@ add_library(ledger_core
 target_include_directories(ledger_core PUBLIC src)
 target_link_libraries(ledger_core PUBLIC ledger_warnings)
 
+# ---- sql --------------------------------------------------------------------
+add_library(ledger_sql
+  src/sql/lexer.cpp
+)
+target_link_libraries(ledger_sql PUBLIC ledger_core)
+
 # ---- tests ------------------------------------------------------------------
 enable_testing()
 
@@ -30,7 +36,8 @@ add_executable(ledger_tests
   tests/main.cpp
   tests/test_result.cpp
   tests/test_value.cpp
+  tests/test_lexer.cpp
 )
 target_include_directories(ledger_tests PRIVATE third_party)
-target_link_libraries(ledger_tests PRIVATE ledger_core)
+target_link_libraries(ledger_tests PRIVATE ledger_core ledger_sql)
 add_test(NAME ledger_tests COMMAND ledger_tests)
