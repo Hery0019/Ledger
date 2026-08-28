@@ -38,6 +38,13 @@ TEST_CASE("splitStatements: semicolons inside strings and comments are not separ
           std::vector<std::string>{"SELECT 1 -- unterminated comment ; still"});
 }
 
+TEST_CASE("splitStatements: a leading UTF-8 BOM is ignored") {
+    CHECK(sqls("\xEF\xBB\xBFSELECT 1;") == std::vector<std::string>{"SELECT 1"});
+    const auto s = splitStatements("\xEF\xBB\xBF\nSELECT 1;");
+    REQUIRE(s.size() == 1);
+    CHECK(s[0].line == 2);
+}
+
 TEST_CASE("splitStatements: an unterminated string swallows the rest") {
     CHECK(sqls("SELECT 'abc; SELECT 2") == std::vector<std::string>{"SELECT 'abc; SELECT 2"});
 }
