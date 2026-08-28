@@ -47,8 +47,13 @@ std::string show(const Expr& e) {
             } else if constexpr (std::is_same_v<N, Binary>) {
                 return "(" + show(*n.lhs) + " " + std::string(binaryOpName(n.op)) + " " +
                        show(*n.rhs) + ")";
-            } else {
+            } else if constexpr (std::is_same_v<N, IsNull>) {
                 return "(" + show(*n.operand) + (n.negated ? " IS NOT NULL)" : " IS NULL)");
+            } else {
+                std::string s = n.name + "(";
+                if (n.star) s += "*";
+                for (std::size_t i = 0; i < n.args.size(); ++i) s += (i ? ", " : "") + show(*n.args[i]);
+                return s + ")";
             }
         },
         e.node);

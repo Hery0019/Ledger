@@ -14,7 +14,7 @@ struct KeywordEntry {
     TokenKind kind;
 };
 
-constexpr std::array<KeywordEntry, 32> kKeywords{{
+constexpr std::array<KeywordEntry, 34> kKeywords{{
     {"select", TokenKind::KwSelect},   {"from", TokenKind::KwFrom},
     {"where", TokenKind::KwWhere},     {"insert", TokenKind::KwInsert},
     {"into", TokenKind::KwInto},       {"values", TokenKind::KwValues},
@@ -31,6 +31,7 @@ constexpr std::array<KeywordEntry, 32> kKeywords{{
     {"text", TokenKind::KwText},       {"bool", TokenKind::KwBool},
     {"primary", TokenKind::KwPrimary}, {"key", TokenKind::KwKey},
     {"view", TokenKind::KwView},       {"as", TokenKind::KwAs},
+    {"group", TokenKind::KwGroup},     {"having", TokenKind::KwHaving},
 }};
 
 // Explicit ASCII classification: we don't want to depend on the locale, and
@@ -263,6 +264,8 @@ std::string_view tokenKindName(TokenKind kind) noexcept {
         case TokenKind::KwKey:      return "KEY";
         case TokenKind::KwView:     return "VIEW";
         case TokenKind::KwAs:       return "AS";
+        case TokenKind::KwGroup:    return "GROUP";
+        case TokenKind::KwHaving:   return "HAVING";
         case TokenKind::Identifier: return "identifier";
         case TokenKind::Integer:    return "integer";
         case TokenKind::Float:      return "float";

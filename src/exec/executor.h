@@ -56,6 +56,9 @@ private:
     // Live rows satisfying `where` (nullptr = all of them).
     Result<std::vector<std::pair<RowId, Row>>> filter(const TableSchema& table,
                                                       const BoundExpr* where);
+    // GROUP BY + aggregates + HAVING: one group row per surviving group.
+    Result<std::vector<Row>> aggregate(const BoundSelect& s,
+                                       const std::vector<std::pair<RowId, Row>>& matches);
     Result<void> checkPrimaryKey(const TableSchema& table, const Value& key,
                                  const std::vector<RowId>& ignore);
 

@@ -34,6 +34,39 @@ Error notFoundTable(const std::string& name) {
 // hand-edited views file.
 constexpr int kMaxViewDepth = 32;
 
+std::optional<AggFunc> aggregateByName(std::string_view name) noexcept {
+    if (name == "count") return AggFunc::Count;
+    if (name == "sum") return AggFunc::Sum;
+    if (name == "avg") return AggFunc::Avg;
+    if (name == "min") return AggFunc::Min;
+    if (name == "max") return AggFunc::Max;
+    return std::nullopt;
+}
+
+// True if the expression contains an aggregate call anywhere.
+bool containsAggregate(const ast::Expr& e) {
+    return std::visit(
+        [](const auto& n) -> bool {
+            using N = std::decay_t<decltype(n)>;
+            if constexpr (std::is_same_v<N, ast::Call>) {
+                if (aggregateByName(n.name)) return true;
+                for (const auto& a : n.args) {
+                    if (containsAggregate(*a)) return true;
+                }
+                return false;
+            } else if constexpr (std::is_same_v<N, ast::Unary>) {
+                return containsAggregate(*n.operand);
+            } else if constexpr (std::is_same_v<N, ast::Binary>) {
+                return containsAggregate(*n.lhs) || containsAggregate(*n.rhs);
+            } else if constexpr (std::is_same_v<N, ast::IsNull>) {
+                return containsAggregate(*n.operand);
+            } else {
+                return false;
+            }
+        },
+        e.node);
+}
+
 // One column visible to an expression: its output name, its type, and the
 // bound expression that computes it over the underlying table's row. For a
 // table that is a plain BoundColumn; for a view it is whatever the view
@@ -82,6 +115,20 @@ struct Scope {
                                                   (isView ? "view '" : "table '") +
                                                   std::string(name) + "'");
     }
+};
+
+// Binding context of an aggregated SELECT. Expressions bound with a group
+// context read the group row: [group keys..., aggregate results...].
+//  - a subtree textually equal to a GROUP BY expression -> key column;
+//  - an aggregate call -> its argument is bound against the source scope and
+//    the call becomes an aggregate-result column;
+//  - any other column reference is an error.
+struct GroupContext {
+    std::vector<std::string> keyTexts;
+    std::vector<DataType> keyTypes;
+    const Scope* source;
+    std::vector<BoundAggregate> aggregates;
+    std::vector<DataType> aggTypes;
 };
 
 std::vector<Slot> tableSlots(const TableSchema& table) {
@@ -156,10 +203,14 @@ private:
         }
         // Binding the view's own SELECT validates it against the catalog.
         LEDGER_TRY(bound, bindStatement(s.query));
+        const auto& sel = std::get<BoundSelect>(bound);
+        if (sel.aggregated) {
+            return makeError(ErrorCode::SyntaxError,
+                             "view '" + s.name + "': aggregate functions are not allowed in a view");
+        }
         // Every output column must be nameable and unique: they become the
         // columns other queries refer to.
         std::set<std::string> seen;
-        const auto& sel = std::get<BoundSelect>(bound);
         for (std::size_t i = 0; i < s.query.items.size(); ++i) {
             const auto& item = s.query.items[i];
             if (item.alias.empty() && !std::holds_alternative<ast::ColumnRef>(item.expr->node)) {
@@ -260,7 +311,42 @@ private:
         LEDGER_TRY(src, resolveSource(s.table, 0));
         const Scope scope{&src.slots, src.name, src.isView};
 
-        BoundSelect out{src.table, {}, {}, nullptr, {}, s.limit};
+        BoundSelect out;
+        out.table = src.table;
+        out.limit = s.limit;
+
+        // WHERE = every view filter AND the query's own filter. Never
+        // aggregated: it runs before grouping.
+        LEDGER_TRY(where, bindWhere(s.where, scope));
+        std::vector<BoundExprPtr> filters = std::move(src.filters);
+        if (where) filters.push_back(std::move(where));
+        out.where = conjunction(std::move(filters));
+
+        // Aggregated as soon as GROUP BY is present or an aggregate appears in
+        // the projection, HAVING or ORDER BY.
+        bool aggregated = !s.groupBy.empty() || (s.having != nullptr);
+        for (const auto& item : s.items) aggregated = aggregated || containsAggregate(*item.expr);
+        for (const auto& ob : s.orderBy) aggregated = aggregated || containsAggregate(*ob.expr);
+
+        GroupContext group{{}, {}, &scope, {}, {}};
+        GroupContext* g = aggregated ? &group : nullptr;
+        if (aggregated) {
+            if (s.star) {
+                return makeError(ErrorCode::SyntaxError,
+                                 "SELECT * cannot be used with GROUP BY or aggregate functions");
+            }
+            for (const auto& key : s.groupBy) {
+                if (containsAggregate(*key)) {
+                    return errorAt(*key, ErrorCode::SyntaxError,
+                                   "aggregate functions are not allowed in GROUP BY");
+                }
+                LEDGER_TRY(e, bindExpr(*key, &scope));
+                group.keyTexts.push_back(ast::exprToString(*key));
+                group.keyTypes.push_back(e->type);
+                out.groupBy.push_back(std::move(e));
+            }
+        }
+
         if (s.star) {
             for (const auto& slot : src.slots) {
                 out.columnNames.push_back(slot.name);
@@ -268,17 +354,20 @@ private:
             }
         } else {
             for (const auto& item : s.items) {
-                LEDGER_TRY(e, bindExpr(*item.expr, &scope));
+                LEDGER_TRY(e, bindExpr(*item.expr, &scope, g));
                 out.columnNames.push_back(itemName(item));
                 out.projection.push_back(std::move(e));
             }
         }
 
-        // WHERE = every view filter AND the query's own filter.
-        LEDGER_TRY(where, bindWhere(s.where, scope));
-        std::vector<BoundExprPtr> filters = std::move(src.filters);
-        if (where) filters.push_back(std::move(where));
-        out.where = conjunction(std::move(filters));
+        if (s.having) {
+            LEDGER_TRY(h, bindExpr(*s.having, &scope, g));
+            if (h->type != DataType::Bool && h->type != DataType::Null) {
+                return errorAt(*s.having, ErrorCode::TypeError,
+                               "HAVING must be BOOL, got " + typeName(h->type));
+            }
+            out.having = std::move(h);
+        }
 
         // ORDER BY: an output alias first, then anything visible in the source
         // (so a hidden column can still order the result).
@@ -290,11 +379,14 @@ private:
                 }
             }
             if (!key) {
-                LEDGER_TRY(e, bindExpr(*ob.expr, &scope));
+                LEDGER_TRY(e, bindExpr(*ob.expr, &scope, g));
                 key = std::move(e);
             }
             out.orderBy.push_back(BoundOrderBy{std::move(key), ob.descending});
         }
+
+        out.aggregated = aggregated;
+        out.aggregates = std::move(group.aggregates);
         return BoundStatement{std::move(out)};
     }
 
@@ -447,8 +539,9 @@ private:
     // ---- expressions -------------------------------------------------------
 
     // `scope`: the columns visible to the expression, or nullptr (VALUES).
-    Result<BoundExprPtr> bindExpr(const ast::Expr& e, const Scope* scope) {
-        LEDGER_TRY(bound, bindNode(e, scope));
+    // `group`: set inside an aggregated SELECT (see GroupContext).
+    Result<BoundExprPtr> bindExpr(const ast::Expr& e, const Scope* scope, GroupContext* group = nullptr) {
+        LEDGER_TRY(bound, bindNode(e, scope, group));
         // Folding: every column-free subtree becomes a constant. A data error
         // (1/0, overflow) surfaces here, with its position.
         if (!std::holds_alternative<Value>(bound->node) && isConstant(*bound)) {
@@ -459,27 +552,38 @@ private:
         return bound;
     }
 
-    Result<BoundExprPtr> bindNode(const ast::Expr& e, const Scope* scope) {
+    Result<BoundExprPtr> bindNode(const ast::Expr& e, const Scope* scope, GroupContext* group) {
+        // In a group context, a subtree written exactly like a GROUP BY key
+        // reads that key from the group row.
+        if (group) {
+            const std::string text = ast::exprToString(e);
+            for (std::size_t i = 0; i < group->keyTexts.size(); ++i) {
+                if (group->keyTexts[i] == text) return make(BoundColumn{i}, group->keyTypes[i]);
+            }
+        }
         return std::visit(
             [&](const auto& n) -> Result<BoundExprPtr> {
                 using N = std::decay_t<decltype(n)>;
                 if constexpr (std::is_same_v<N, ast::Literal>) {
                     return make(n.value, n.value.type());
                 } else if constexpr (std::is_same_v<N, ast::ColumnRef>) {
-                    return bindColumn(e, n, scope);
+                    return bindColumn(e, n, scope, group);
                 } else if constexpr (std::is_same_v<N, ast::Unary>) {
-                    return bindUnary(e, n, scope);
+                    return bindUnary(e, n, scope, group);
                 } else if constexpr (std::is_same_v<N, ast::Binary>) {
-                    return bindBinary(e, n, scope);
-                } else {
-                    LEDGER_TRY(operand, bindExpr(*n.operand, scope));
+                    return bindBinary(e, n, scope, group);
+                } else if constexpr (std::is_same_v<N, ast::IsNull>) {
+                    LEDGER_TRY(operand, bindExpr(*n.operand, scope, group));
                     return make(BoundIsNull{std::move(operand), n.negated}, DataType::Bool);
+                } else {
+                    return bindCall(e, n, group);
                 }
             },
             e.node);
     }
 
-    Result<BoundExprPtr> bindColumn(const ast::Expr& e, const ast::ColumnRef& c, const Scope* scope) {
+    Result<BoundExprPtr> bindColumn(const ast::Expr& e, const ast::ColumnRef& c, const Scope* scope,
+                                    const GroupContext* group) {
         if (!scope) {
             return errorAt(e, ErrorCode::SyntaxError,
                            "column reference '" + c.name + "' is not allowed here");
@@ -489,11 +593,77 @@ private:
             const Error err = scope->unknownColumn(c.name);
             return errorAt(e, err.code, err.message);
         }
+        if (group) {
+            return errorAt(e, ErrorCode::SyntaxError,
+                           "column '" + c.name +
+                               "' must appear in GROUP BY or be used in an aggregate function");
+        }
         return cloneExpr(*slot->expr);
     }
 
-    Result<BoundExprPtr> bindUnary(const ast::Expr& e, const ast::Unary& u, const Scope* scope) {
-        LEDGER_TRY(operand, bindExpr(*u.operand, scope));
+    // Aggregate arguments read source rows through the group's source scope;
+    // scalar functions will bind their arguments in the caller's scope.
+    Result<BoundExprPtr> bindCall(const ast::Expr& e, const ast::Call& call, GroupContext* group) {
+        const auto agg = aggregateByName(call.name);
+        if (!agg) {
+            return errorAt(e, ErrorCode::SyntaxError, "unknown function '" + call.name + "'");
+        }
+        if (!group) {
+            return errorAt(e, ErrorCode::SyntaxError,
+                           "aggregate function '" + call.name + "()' is not allowed here");
+        }
+        if (call.star && *agg != AggFunc::Count) {
+            return errorAt(e, ErrorCode::SyntaxError, call.name + "(*) is not valid; only count(*) is");
+        }
+        if (!call.star && call.args.size() != 1) {
+            return errorAt(e, ErrorCode::SyntaxError,
+                           call.name + "() takes exactly one argument, got " +
+                               std::to_string(call.args.size()));
+        }
+
+        BoundAggregate bound{*agg, nullptr};
+        DataType argType = DataType::Null;
+        if (!call.star) {
+            if (containsAggregate(*call.args[0])) {
+                return errorAt(e, ErrorCode::SyntaxError, "aggregate functions cannot be nested");
+            }
+            // The argument reads source rows: bound against the source scope,
+            // outside the group context.
+            LEDGER_TRY(arg, bindExpr(*call.args[0], group->source));
+            argType = arg->type;
+            bound.arg = std::move(arg);
+        }
+
+        DataType result = DataType::Null;
+        switch (*agg) {
+            case AggFunc::Count:
+                result = DataType::Int;
+                break;
+            case AggFunc::Sum:
+            case AggFunc::Avg:
+                if (!isNumeric(argType) && argType != DataType::Null) {
+                    return errorAt(e, ErrorCode::TypeError,
+                                   call.name + "() requires INT or FLOAT, got " + typeName(argType));
+                }
+                result = argType == DataType::Null ? DataType::Null
+                         : (*agg == AggFunc::Avg)  ? DataType::Float
+                                                   : argType;
+                break;
+            case AggFunc::Min:
+            case AggFunc::Max:
+                result = argType;
+                break;
+        }
+
+        const std::size_t index = group->keyTexts.size() + group->aggregates.size();
+        group->aggregates.push_back(std::move(bound));
+        group->aggTypes.push_back(result);
+        return make(BoundColumn{index}, result);
+    }
+
+    Result<BoundExprPtr> bindUnary(const ast::Expr& e, const ast::Unary& u, const Scope* scope,
+                                   GroupContext* group) {
+        LEDGER_TRY(operand, bindExpr(*u.operand, scope, group));
         const DataType t = operand->type;
         switch (u.op) {
             case UnaryOp::Not:
@@ -511,9 +681,10 @@ private:
         return make(BoundUnary{u.op, std::move(operand)}, t);
     }
 
-    Result<BoundExprPtr> bindBinary(const ast::Expr& e, const ast::Binary& b, const Scope* scope) {
-        LEDGER_TRY(lhs, bindExpr(*b.lhs, scope));
-        LEDGER_TRY(rhs, bindExpr(*b.rhs, scope));
+    Result<BoundExprPtr> bindBinary(const ast::Expr& e, const ast::Binary& b, const Scope* scope,
+                                    GroupContext* group) {
+        LEDGER_TRY(lhs, bindExpr(*b.lhs, scope, group));
+        LEDGER_TRY(rhs, bindExpr(*b.rhs, scope, group));
         const DataType lt = lhs->type;
         const DataType rt = rhs->type;
         const std::string opName(ast::binaryOpName(b.op));

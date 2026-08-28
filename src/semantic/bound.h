@@ -82,6 +82,28 @@ struct BoundOrderBy {
     bool descending;
 };
 
+enum class AggFunc { Count, Sum, Avg, Min, Max };
+
+std::string_view aggFuncName(AggFunc f) noexcept;
+
+// One aggregate computed per group. `arg` is evaluated on every source row of
+// the group; nullptr for COUNT(*).
+struct BoundAggregate {
+    AggFunc func;
+    BoundExprPtr arg;
+};
+
+// A SELECT is either a plain row pipeline or an aggregating one:
+//
+//   plain      : source rows -> WHERE -> projection / ORDER BY keys
+//   aggregated : source rows -> WHERE -> grouped by `groupBy` -> one group
+//                row [key0.., agg0..] per group -> HAVING -> projection /
+//                ORDER BY keys
+//
+// In the aggregated case `projection`, `having` and `orderBy` expressions are
+// bound against the group row (BoundColumn indices into it), never against
+// the source row. Without GROUP BY, every row is one group (an empty source
+// still yields one group: COUNT(*) = 0, other aggregates NULL).
 struct BoundSelect {
     const TableSchema* table;
     std::vector<std::string> columnNames;   // output header, one per projection
@@ -89,6 +111,11 @@ struct BoundSelect {
     BoundExprPtr where;                     // nullptr = every row; type Bool or Null
     std::vector<BoundOrderBy> orderBy;      // lexicographic, first key first
     std::optional<std::int64_t> limit;
+
+    bool aggregated = false;
+    std::vector<BoundExprPtr> groupBy;      // evaluated on source rows
+    std::vector<BoundAggregate> aggregates;
+    BoundExprPtr having;                    // nullptr = keep every group
 };
 
 struct BoundUpdate {

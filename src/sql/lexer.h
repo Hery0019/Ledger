@@ -16,7 +16,7 @@ enum class TokenKind {
     KwSelect, KwFrom, KwWhere, KwInsert, KwInto, KwValues, KwCreate, KwDrop,
     KwTable, KwUpdate, KwSet, KwDelete, KwOrder, KwBy, KwAsc, KwDesc, KwLimit,
     KwAnd, KwOr, KwNot, KwNull, KwTrue, KwFalse, KwIs, KwInt, KwFloat, KwText,
-    KwBool, KwPrimary, KwKey, KwView, KwAs,
+    KwBool, KwPrimary, KwKey, KwView, KwAs, KwGroup, KwHaving,
 
     // Lexemes carrying text
     Identifier,  // folded to ASCII lowercase
@@ -44,7 +44,7 @@ struct Token {
     std::size_t offset = 0;  // byte offset of the first character in the input
 
     [[nodiscard]] bool isKeyword() const noexcept {
-        return kind >= TokenKind::KwSelect && kind <= TokenKind::KwAs;
+        return kind >= TokenKind::KwSelect && kind <= TokenKind::KwHaving;
     }
 };
 

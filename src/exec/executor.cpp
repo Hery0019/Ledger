@@ -1,6 +1,9 @@
 #include "exec/executor.h"
 
 #include <algorithm>
+#include <limits>
+#include <map>
+#include <optional>
 #include <utility>
 
 #include "semantic/binder.h"
@@ -141,29 +144,183 @@ Result<QueryResult> Executor::run(const BoundInsert& s) {
     return QueryResult{{}, {}, 1, ResultKind::Dml};
 }
 
+namespace {
+
+// Running state of one aggregate over one group.
+struct AggState {
+    std::int64_t count = 0;  // non-NULL values seen (rows, for COUNT(*))
+    std::int64_t isum = 0;   // SUM over Int, checked
+    double fsum = 0.0;       // SUM/AVG over Float, or after an Int overflow to Float
+    bool useFloat = false;
+    std::optional<Value> minv, maxv;
+};
+
+Result<void> accumulate(AggState& st, AggFunc f, const Value& v) {
+    if (v.isNull()) return {};
+    ++st.count;
+    switch (f) {
+        case AggFunc::Count:
+            break;
+        case AggFunc::Sum:
+            if (v.type() == DataType::Float) {
+                if (!st.useFloat) {
+                    st.useFloat = true;
+                    st.fsum = static_cast<double>(st.isum);
+                }
+                st.fsum += v.asFloat();
+            } else if (st.useFloat) {
+                st.fsum += static_cast<double>(v.asInt());
+            } else {
+                const std::int64_t a = st.isum, b = v.asInt();
+                constexpr auto kMax = std::numeric_limits<std::int64_t>::max();
+                constexpr auto kMin = std::numeric_limits<std::int64_t>::min();
+                if ((b > 0 && a > kMax - b) || (b < 0 && a < kMin - b)) {
+                    return makeError(ErrorCode::TypeError, "integer overflow in sum()");
+                }
+                st.isum = a + b;
+            }
+            break;
+        case AggFunc::Avg:
+            st.fsum += v.type() == DataType::Int ? static_cast<double>(v.asInt()) : v.asFloat();
+            break;
+        case AggFunc::Min:
+        case AggFunc::Max: {
+            std::optional<Value>& best = f == AggFunc::Min ? st.minv : st.maxv;
+            if (!best) {
+                best = v;
+                break;
+            }
+            LEDGER_TRY(ord, Value::compare(v, *best));
+            if ((f == AggFunc::Min && ord == Ordering::Less) || (f == AggFunc::Max && ord == Ordering::Greater)) {
+                best = v;
+            }
+            break;
+        }
+    }
+    return {};
+}
+
+Result<Value> finalize(const AggState& st, AggFunc f) {
+    switch (f) {
+        case AggFunc::Count: return Value::integer(st.count);
+        case AggFunc::Sum:
+            if (st.count == 0) return Value::null();
+            return st.useFloat ? Value::real(st.fsum) : Value::integer(st.isum);
+        case AggFunc::Avg:
+            if (st.count == 0) return Value::null();
+            return Value::real(st.fsum / static_cast<double>(st.count));
+        case AggFunc::Min: return st.minv ? *st.minv : Value::null();
+        case AggFunc::Max: return st.maxv ? *st.maxv : Value::null();
+    }
+    return makeError(ErrorCode::Internal, "finalize: unknown aggregate");
+}
+
+// Lexicographic order on group keys (NULLs group together, before values).
+struct RowLess {
+    bool operator()(const Row& a, const Row& b) const {
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            if (lessForSort(a[i], b[i])) return true;
+            if (lessForSort(b[i], a[i])) return false;
+        }
+        return false;
+    }
+};
+
+}  // namespace
+
+// Groups the filtered rows and returns one row per surviving group:
+// [group keys..., aggregate results...], in order of first appearance.
+Result<std::vector<Row>> Executor::aggregate(const BoundSelect& s,
+                                             const std::vector<std::pair<RowId, Row>>& matches) {
+    struct Group {
+        Row keys;
+        std::vector<AggState> states;
+    };
+    std::vector<Group> groups;
+    std::map<Row, std::size_t, RowLess> index;
+
+    for (const auto& [id, row] : matches) {
+        Row keys;
+        keys.reserve(s.groupBy.size());
+        for (const auto& k : s.groupBy) {
+            auto v = eval(*k, row);
+            if (!v.ok()) return rowError(id, v.error());
+            keys.push_back(std::move(v).value());
+        }
+        auto it = index.find(keys);
+        if (it == index.end()) {
+            it = index.emplace(keys, groups.size()).first;
+            groups.push_back(Group{std::move(keys), std::vector<AggState>(s.aggregates.size())});
+        }
+        Group& g = groups[it->second];
+        for (std::size_t a = 0; a < s.aggregates.size(); ++a) {
+            const auto& agg = s.aggregates[a];
+            if (!agg.arg) {
+                ++g.states[a].count;  // COUNT(*)
+                continue;
+            }
+            auto v = eval(*agg.arg, row);
+            if (!v.ok()) return rowError(id, v.error());
+            auto acc = accumulate(g.states[a], agg.func, v.value());
+            if (!acc.ok()) return rowError(id, acc.error());
+        }
+    }
+    // No GROUP BY: the whole input is one group, even when empty.
+    if (groups.empty() && s.groupBy.empty()) {
+        groups.push_back(Group{{}, std::vector<AggState>(s.aggregates.size())});
+    }
+
+    std::vector<Row> out;
+    out.reserve(groups.size());
+    for (const auto& g : groups) {
+        Row groupRow = g.keys;
+        for (std::size_t a = 0; a < s.aggregates.size(); ++a) {
+            LEDGER_TRY(v, finalize(g.states[a], s.aggregates[a].func));
+            groupRow.push_back(std::move(v));
+        }
+        if (s.having) {
+            LEDGER_TRY(keep, eval(*s.having, groupRow));
+            if (keep.isNull() || !keep.asBool()) continue;
+        }
+        out.push_back(std::move(groupRow));
+    }
+    return out;
+}
+
 Result<QueryResult> Executor::run(const BoundSelect& s) {
     LEDGER_TRY(matches, filter(*s.table, s.where.get()));
 
-    // Sort keys and projected values are both computed from the source row,
+    // The rows the projection and ORDER BY read: source rows, or one group
+    // row per group when aggregating.
+    std::vector<std::pair<RowId, Row>> inputs;
+    if (s.aggregated) {
+        LEDGER_TRY(groups, aggregate(s, matches));
+        inputs.reserve(groups.size());
+        for (auto& g : groups) inputs.emplace_back(0, std::move(g));
+    } else {
+        inputs = std::move(matches);
+    }
+
+    // Sort keys and projected values are both computed from the input row,
     // so ORDER BY may use columns the projection does not keep.
     struct Item {
         Row keys;
         Row projected;
     };
     std::vector<Item> items;
-    items.reserve(matches.size());
-    for (const auto& [id, row] : matches) {
+    items.reserve(inputs.size());
+    for (const auto& [id, row] : inputs) {
         Item item;
         item.keys.reserve(s.orderBy.size());
         for (const auto& ob : s.orderBy) {
             auto v = eval(*ob.expr, row);
-            if (!v.ok()) return rowError(id, v.error());
+            if (!v.ok()) return s.aggregated ? v.error() : rowError(id, v.error());
             item.keys.push_back(std::move(v).value());
         }
         item.projected.reserve(s.projection.size());
         for (const auto& e : s.projection) {
             auto v = eval(*e, row);
-            if (!v.ok()) return rowError(id, v.error());
+            if (!v.ok()) return s.aggregated ? v.error() : rowError(id, v.error());
             item.projected.push_back(std::move(v).value());
         }
         items.push_back(std::move(item));

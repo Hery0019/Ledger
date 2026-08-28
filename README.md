@@ -8,7 +8,10 @@ meant for personal use afterwards.
 - `CREATE TABLE` / `DROP TABLE` — types `INT`, `FLOAT`, `TEXT`, `BOOL`;
   constraints `PRIMARY KEY` (one per table, implies `NOT NULL`) and `NOT NULL`.
 - `INSERT INTO t [(cols)] VALUES (...)` — one row per statement.
-- `SELECT * | cols FROM t [WHERE expr] [ORDER BY col [ASC|DESC]] [LIMIT n]`.
+- `SELECT * | expr [AS alias], ... FROM t [WHERE expr] [GROUP BY expr, ...]
+  [HAVING expr] [ORDER BY expr [ASC|DESC], ...] [LIMIT n]`.
+- Aggregates `COUNT(*)`, `COUNT(x)`, `SUM`, `AVG`, `MIN`, `MAX` (NULLs skipped;
+  SUM over INT stays INT and refuses to overflow).
 - `UPDATE t SET col = expr, ... [WHERE expr]`, `DELETE FROM t [WHERE expr]`.
 - `CREATE VIEW v AS SELECT cols FROM t [WHERE expr]` / `DROP VIEW v` — a view is
   a stored projection + filter over a table or another view; it can be
