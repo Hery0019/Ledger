@@ -45,6 +45,10 @@ public:
         ++lookups;
         return inner_.lookup(t, c, k);
     }
+    Result<std::vector<std::pair<RowId, Row>>> lookupAll(std::string_view t, std::size_t c, const Value& k) override {
+        ++lookups;
+        return inner_.lookupAll(t, c, k);
+    }
     Result<std::optional<Value>> maxKey(std::string_view t, std::size_t c) override { return inner_.maxKey(t, c); }
     Result<void> compact(std::string_view t) override { return inner_.compact(t); }
     Result<std::vector<TableSchema>> loadSchemas() override { return inner_.loadSchemas(); }
@@ -75,7 +79,7 @@ TEST_CASE("TableIndexes tracks add, replace and remove; no index without a PRIMA
     idx.replace(10, row(1, "a"), row(5, "a"));  // key changed
     CHECK_FALSE(idx.on(0)->find(i(1)).has_value());
     CHECK(idx.on(0)->find(i(5)) == 10);
-    idx.remove(row(2, "b"));
+    idx.remove(11, row(2, "b"));
     CHECK_FALSE(idx.on(0)->find(i(2)).has_value());
     // Int key looked up with a Float value: numeric comparison.
     CHECK(idx.on(0)->find(Value::real(5.0).value()) == 10);
@@ -94,6 +98,31 @@ TEST_CASE("TableIndexes tracks add, replace and remove; no index without a PRIMA
     CHECK(uq.on(1)->find(Value::text("x")) == 1);
     CHECK(uq.on(0)->find(i(2)) == 2);
     CHECK_FALSE(uq.on(1)->maxKey() == Value::null());
+}
+
+TEST_CASE("a non-unique index keeps every duplicate and removes one entry at a time") {
+    TableIndexes idx(TableSchema{"u", {ColumnSchema{"a", DataType::Int, false, false}}});
+    REQUIRE(idx.addIndex(0));
+    CHECK_FALSE(idx.addIndex(0));  // one index per column
+    CHECK_FALSE(idx.on(0)->unique());
+
+    idx.add(10, Row{i(5)});
+    idx.add(11, Row{i(5)});
+    idx.add(12, Row{i(7)});
+    CHECK(idx.on(0)->findAll(i(5)) == std::vector<RowId>{10, 11});
+    CHECK(idx.on(0)->findAll(i(7)) == std::vector<RowId>{12});
+    CHECK(idx.on(0)->findAll(i(9)).empty());
+    CHECK(idx.on(0)->findAll(Value::null()).empty());
+
+    // Removing one duplicate leaves the other in place.
+    idx.remove(10, Row{i(5)});
+    CHECK(idx.on(0)->findAll(i(5)) == std::vector<RowId>{11});
+
+    // A schema-born unique index cannot be dropped; a user one can.
+    TableIndexes pk(schema());
+    CHECK_FALSE(pk.removeIndex(0));
+    CHECK(idx.removeIndex(0));
+    CHECK_FALSE(idx.has(0));
 }
 
 // ---- engines ---------------------------------------------------------------

@@ -560,14 +560,16 @@ Result<std::vector<Row>> Executor::collect(const BoundSelect& s) {
         ~Restore() { slot = value; }
     } restore{subs_, saved};
 
-    // WHERE over the relation's rows. `WHERE pk = value` on a table is
-    // answered by the primary-key index without materializing the table.
+    // WHERE over the relation's rows. `WHERE indexed_column = value` on a
+    // table is answered by that column's index without materializing the
+    // table — one row for the primary key, possibly several for a
+    // user-declared index.
     std::vector<std::pair<RowId, Row>> matches;
     std::vector<std::pair<RowId, Row>> source;
     if (const auto point = pointLookupKey(s, engine_)) {
         const auto* scan = std::get_if<RelScan>(&s.relation->node);
-        LEDGER_TRY(hit, engine_.lookup(scan->table->name, point->first, *point->second));
-        if (hit) matches.push_back(std::move(*hit));
+        LEDGER_TRY(hits, engine_.lookupAll(scan->table->name, point->first, *point->second));
+        matches = std::move(hits);
     } else {
         LEDGER_TRY(rows, evaluate(*s.relation));
         source = std::move(rows);

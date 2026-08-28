@@ -23,6 +23,8 @@ public:
     [[nodiscard]] bool indexed(std::string_view table, std::size_t column) const noexcept override;
     Result<std::optional<std::pair<RowId, Row>>> lookup(std::string_view table, std::size_t column,
                                                         const Value& key) override;
+    Result<std::vector<std::pair<RowId, Row>>> lookupAll(std::string_view table, std::size_t column,
+                                                         const Value& key) override;
     Result<std::optional<Value>> maxKey(std::string_view table, std::size_t column) override;
     Result<void> compact(std::string_view table) override;
     Result<std::vector<TableSchema>> loadSchemas() override;
