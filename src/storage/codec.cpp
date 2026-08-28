@@ -146,6 +146,7 @@ std::string encodeSchema(const TableSchema& schema) {
         if (c.primaryKey) out += " PK";
         else if (c.notNull) out += " NN";
         if (c.unique) out += " UQ";
+        if (c.autoIncrement) out += " AI";
         if (!c.check.empty()) out += " CHK:" + escapeAttr(c.check);
         if (c.reference) {
             out += " FK:" + c.reference->table + "." + c.reference->column;
@@ -188,6 +189,8 @@ Result<TableSchema> decodeSchema(std::string_view tableName, std::string_view co
                 col.notNull = true;
             } else if (flag == "UQ") {
                 col.unique = true;
+            } else if (flag == "AI") {
+                col.autoIncrement = true;
             } else if (flag.starts_with("CHK:")) {
                 LEDGER_TRY(text, unescapeAttr(flag.substr(4)));
                 if (text.empty()) return corruption(where + "empty CHECK constraint");

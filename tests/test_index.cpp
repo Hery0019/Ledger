@@ -45,6 +45,7 @@ public:
         ++lookups;
         return inner_.lookup(t, c, k);
     }
+    Result<std::optional<Value>> maxKey(std::string_view t, std::size_t c) override { return inner_.maxKey(t, c); }
     Result<void> compact(std::string_view t) override { return inner_.compact(t); }
     Result<std::vector<TableSchema>> loadSchemas() override { return inner_.loadSchemas(); }
     Result<void> saveViews(const std::vector<ViewDef>& v) override { return inner_.saveViews(v); }

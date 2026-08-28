@@ -272,10 +272,22 @@ Result<std::vector<std::pair<RowId, Row>>> Executor::rowsWithValue(const TableSc
 }
 
 Result<QueryResult> Executor::run(const BoundInsert& s) {
-    LEDGER_TRY_VOID(runChecks(*s.table, s.checks, s.row));
-    LEDGER_TRY_VOID(checkForeignKeys(*s.table, s.row));
-    LEDGER_TRY_VOID(checkUnique(*s.table, s.row, {}));
-    LEDGER_TRY(id, engine_.insert(s.table->name, s.row));
+    Row row = s.row;
+    if (s.autoColumn) {
+        // Next key = largest live key + 1 (so a deleted maximum can be handed
+        // out again), 1 for an empty table. The PK index answers directly.
+        LEDGER_TRY(max, engine_.maxKey(s.table->name, *s.autoColumn));
+        const std::int64_t last = max ? max->asInt() : 0;
+        if (last == std::numeric_limits<std::int64_t>::max()) {
+            return makeError(ErrorCode::TypeError, "AUTOINCREMENT column '" +
+                                                      s.table->columns[*s.autoColumn].name + "' is exhausted");
+        }
+        row[*s.autoColumn] = Value::integer(last < 0 ? 1 : last + 1);
+    }
+    LEDGER_TRY_VOID(runChecks(*s.table, s.checks, row));
+    LEDGER_TRY_VOID(checkForeignKeys(*s.table, row));
+    LEDGER_TRY_VOID(checkUnique(*s.table, row, {}));
+    LEDGER_TRY(id, engine_.insert(s.table->name, row));
     if (undo_) undo_->push_back(Undo{Undo::Kind::Insert, s.table->name, id, {}});
     return QueryResult{{}, {}, 1, ResultKind::Dml};
 }

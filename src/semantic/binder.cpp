@@ -207,6 +207,17 @@ private:
                 hasPrimaryKey = true;
             }
             ColumnSchema column{c.name, c.type, c.primaryKey, c.notNull || c.primaryKey, std::nullopt, c.unique};
+            if (c.autoIncrement) {
+                if (c.type != DataType::Int || !c.primaryKey) {
+                    return makeError(ErrorCode::SyntaxError,
+                                     "column '" + c.name + "': AUTOINCREMENT requires INT PRIMARY KEY");
+                }
+                if (c.defaultExpr) {
+                    return makeError(ErrorCode::SyntaxError,
+                                     "column '" + c.name + "': AUTOINCREMENT and DEFAULT are exclusive");
+                }
+                column.autoIncrement = true;
+            }
             if (c.defaultExpr) {
                 // A DEFAULT is a constant: bound without any column in scope,
                 // it folds to a Value, then must fit the column like an
@@ -421,10 +432,17 @@ private:
 
         Row row(table->columns.size(), Value::null());
         std::vector<bool> provided(table->columns.size(), false);
+        std::optional<std::size_t> autoColumn;
         for (std::size_t i = 0; i < targets.size(); ++i) {
             const ColumnSchema& col = table->columns[targets[i]];
             // No current row inside VALUES: every column is forbidden there.
             LEDGER_TRY(e, bindExpr(*s.values[i], nullptr));
+            // NULL into an AUTOINCREMENT column asks for the next key.
+            if (col.autoIncrement && e->type == DataType::Null) {
+                autoColumn = targets[i];
+                provided[targets[i]] = true;
+                continue;
+            }
             LEDGER_TRY(fitted, fitToColumn(std::move(e), col, *s.values[i]));
             // Without a column, the expression was folded: it is a Value.
             const Value* v = std::get_if<Value>(&fitted->node);
@@ -436,7 +454,9 @@ private:
         for (std::size_t i = 0; i < table->columns.size(); ++i) {
             if (provided[i]) continue;
             const ColumnSchema& col = table->columns[i];
-            if (col.defaultValue) {
+            if (col.autoIncrement) {
+                autoColumn = i;
+            } else if (col.defaultValue) {
                 row[i] = *col.defaultValue;
             } else if (col.notNull) {
                 return makeError(ErrorCode::ConstraintViolation,
@@ -444,7 +464,7 @@ private:
             }
         }
         LEDGER_TRY(checks, bindChecks(*table, scope));
-        return BoundStatement{BoundInsert{table, std::move(row), std::move(checks)}};
+        return BoundStatement{BoundInsert{table, std::move(row), std::move(checks), autoColumn}};
     }
 
     Result<BoundStatement> bindStatement(const ast::Select& s) {
