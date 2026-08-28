@@ -208,13 +208,16 @@ int repl(const Console& con, Database& db) {
               << con.paint(ansi::bold, "  embedded SQL, plain-text storage")
               << con.paint(ansi::dim, "  ·  ") << db.directory().string() << '\n'
               << con.paint(ansi::dim, "  End each statement with ';'. Type .help for commands.") << "\n\n";
+    // `ledger*>` while a transaction is open.
     const std::string prompt = con.paint(ansi::green, "ledger") + con.paint(ansi::dim, "> ");
+    const std::string txPrompt = con.paint(ansi::green, "ledger") + con.paint(ansi::yellow, "*") +
+                                 con.paint(ansi::dim, "> ");
     const std::string more = con.paint(ansi::dim, "   ...> ");
     std::string buffer;
     std::string line;
     bool quit = false;
     while (!quit) {
-        std::cout << (buffer.empty() ? prompt : more) << std::flush;
+        std::cout << (!buffer.empty() ? more : db.inTransaction() ? txPrompt : prompt) << std::flush;
         if (!std::getline(std::cin, line)) break;
         if (buffer.empty() && dotCommand(con, db, line, quit)) continue;
         buffer += line;

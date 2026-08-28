@@ -399,6 +399,23 @@ Result<void> FileEngine::remove(std::string_view table, RowId id) {
     return maybeCompact(*t);
 }
 
+Result<void> FileEngine::restore(std::string_view table, RowId id, const Row& row) {
+    const std::lock_guard<std::mutex> lock(mu_);
+    LEDGER_TRY(t, loaded(table));
+    if (t->rows.contains(id)) {
+        return makeError(ErrorCode::AlreadyExists, "row " + std::to_string(id) + " is live");
+    }
+    if (row.size() != t->schema.columns.size()) {
+        return makeError(ErrorCode::Internal, "restore: wrong number of values");
+    }
+    // Same record as an insert: on replay, the earlier tombstone has already
+    // removed the old version, so the id is free again.
+    LEDGER_TRY_VOID(appendLine(*t, codec::encodeInsert(id, row)));
+    t->rows.emplace(id, row);
+    if (id >= t->nextId) t->nextId = id + 1;
+    return {};
+}
+
 // ---- compaction ------------------------------------------------------------
 
 Result<void> FileEngine::maybeCompact(Table& t) {

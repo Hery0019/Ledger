@@ -270,6 +270,10 @@ private:
         return BoundStatement{BoundDropView{s.name}};
     }
 
+    Result<BoundStatement> bindStatement(const ast::Begin&) { return BoundStatement{BoundBegin{}}; }
+    Result<BoundStatement> bindStatement(const ast::Commit&) { return BoundStatement{BoundCommit{}}; }
+    Result<BoundStatement> bindStatement(const ast::Rollback&) { return BoundStatement{BoundRollback{}}; }
+
     Result<void> checkNoDependents(const std::string& name, const char* what) const {
         const auto deps = catalog_.dependents(name);
         if (deps.empty()) return {};

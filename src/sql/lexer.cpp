@@ -14,7 +14,7 @@ struct KeywordEntry {
     TokenKind kind;
 };
 
-constexpr std::array<KeywordEntry, 52> kKeywords{{
+constexpr std::array<KeywordEntry, 56> kKeywords{{
     {"select", TokenKind::KwSelect},   {"from", TokenKind::KwFrom},
     {"where", TokenKind::KwWhere},     {"insert", TokenKind::KwInsert},
     {"into", TokenKind::KwInto},       {"values", TokenKind::KwValues},
@@ -41,6 +41,8 @@ constexpr std::array<KeywordEntry, 52> kKeywords{{
     {"then", TokenKind::KwThen},       {"else", TokenKind::KwElse},
     {"end", TokenKind::KwEnd},         {"union", TokenKind::KwUnion},
     {"all", TokenKind::KwAll},         {"exists", TokenKind::KwExists},
+    {"begin", TokenKind::KwBegin},     {"commit", TokenKind::KwCommit},
+    {"rollback", TokenKind::KwRollback}, {"transaction", TokenKind::KwTransaction},
 }};
 
 // Explicit ASCII classification: we don't want to depend on the locale, and
@@ -294,6 +296,10 @@ std::string_view tokenKindName(TokenKind kind) noexcept {
         case TokenKind::KwUnion:    return "UNION";
         case TokenKind::KwAll:      return "ALL";
         case TokenKind::KwExists:   return "EXISTS";
+        case TokenKind::KwBegin:    return "BEGIN";
+        case TokenKind::KwCommit:   return "COMMIT";
+        case TokenKind::KwRollback: return "ROLLBACK";
+        case TokenKind::KwTransaction: return "TRANSACTION";
         case TokenKind::Identifier: return "identifier";
         case TokenKind::Integer:    return "integer";
         case TokenKind::Float:      return "float";

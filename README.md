@@ -29,7 +29,11 @@ meant for personal use afterwards.
 - Expressions: `+ - * /`, comparisons, `AND OR NOT`, `IS [NOT] NULL`,
   `[NOT] IN (...)`, `[NOT] BETWEEN a AND b`, `[NOT] LIKE 'pattern'` (`%`, `_`),
   SQL three-valued logic. Case-insensitive identifiers.
-- No correlated subqueries, indexes or transactions.
+- `BEGIN [TRANSACTION]` / `COMMIT` / `ROLLBACK`: writes are applied at once and
+  logged; `ROLLBACK` undoes them in reverse order. Atomic within the process,
+  not across a crash. `CREATE` / `DROP` are refused inside a transaction; a
+  session closing mid-transaction rolls it back.
+- No correlated subqueries, no indexes.
 
 ## Build and test
 

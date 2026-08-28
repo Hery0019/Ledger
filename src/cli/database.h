@@ -23,6 +23,7 @@ public:
     Result<QueryResult> execute(std::string_view sql) { return executor_.execute(sql); }
 
     [[nodiscard]] const Catalog& catalog() const noexcept { return catalog_; }
+    [[nodiscard]] bool inTransaction() const noexcept { return executor_.inTransaction(); }
     [[nodiscard]] const std::filesystem::path& directory() const noexcept { return engine_->directory(); }
 
     // Engine warnings (dropped truncated lines...), cleared on call.
