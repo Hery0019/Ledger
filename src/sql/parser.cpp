@@ -1,0 +1,384 @@
+#include "sql/parser.h"
+
+#include <initializer_list>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "sql/lexer.h"
+
+namespace ledger {
+
+namespace {
+
+using namespace ast;
+
+class Parser {
+public:
+    explicit Parser(std::vector<Token> tokens) noexcept : tokens_(std::move(tokens)) {}
+
+    Result<Statement> run() {
+        LEDGER_TRY(stmt, statement());
+        if (at(TokenKind::Semicolon)) advance();
+        if (!at(TokenKind::End)) return unexpected("end of input");
+        return stmt;
+    }
+
+private:
+    // ---- accès aux tokens --------------------------------------------------
+
+    [[nodiscard]] const Token& peek() const noexcept { return tokens_[pos_]; }
+    [[nodiscard]] bool at(TokenKind kind) const noexcept { return peek().kind == kind; }
+
+    // Le dernier token est toujours End : on ne dépasse jamais.
+    const Token& advance() noexcept {
+        const Token& t = tokens_[pos_];
+        if (!at(TokenKind::End)) ++pos_;
+        return t;
+    }
+
+    bool accept(TokenKind kind) noexcept {
+        if (!at(kind)) return false;
+        advance();
+        return true;
+    }
+
+    Result<const Token*> expect(TokenKind kind) {
+        if (!at(kind)) return unexpected("'" + std::string(tokenKindName(kind)) + "'");
+        return &advance();
+    }
+
+    Result<std::string> identifier() {
+        if (!at(TokenKind::Identifier)) return unexpected("identifier");
+        return advance().text;
+    }
+
+    // ---- erreurs -----------------------------------------------------------
+
+    static std::string describe(const Token& t) {
+        switch (t.kind) {
+            case TokenKind::Identifier: return "identifier '" + t.text + "'";
+            case TokenKind::Integer:    return "integer '" + t.text + "'";
+            case TokenKind::Float:      return "float '" + t.text + "'";
+            case TokenKind::String:     return "string '" + t.text + "'";
+            default:                    return "'" + std::string(tokenKindName(t.kind)) + "'";
+        }
+    }
+
+    static Error errorAt(const Token& t, const std::string& what) {
+        return makeError(ErrorCode::SyntaxError,
+                         std::to_string(t.line) + ":" + std::to_string(t.column) + ": " + what);
+    }
+
+    Error unexpected(const std::string& expected) const {
+        return errorAt(peek(), "expected " + expected + ", got " + describe(peek()));
+    }
+
+    // ---- instructions ------------------------------------------------------
+
+    Result<Statement> statement() {
+        switch (peek().kind) {
+            case TokenKind::KwCreate: return createTable();
+            case TokenKind::KwDrop:   return dropTable();
+            case TokenKind::KwInsert: return insert();
+            case TokenKind::KwSelect: return select();
+            case TokenKind::KwUpdate: return update();
+            case TokenKind::KwDelete: return del();
+            default: return unexpected("statement (CREATE, DROP, INSERT, SELECT, UPDATE or DELETE)");
+        }
+    }
+
+    // CREATE TABLE name ( col type [PRIMARY KEY] [NOT NULL] {, ...} )
+    Result<Statement> createTable() {
+        advance();  // CREATE
+        LEDGER_TRY_VOID(expect(TokenKind::KwTable));
+        LEDGER_TRY(table, identifier());
+        LEDGER_TRY_VOID(expect(TokenKind::LParen));
+
+        std::vector<ColumnDef> columns;
+        do {
+            LEDGER_TRY(col, columnDef());
+            columns.push_back(std::move(col));
+        } while (accept(TokenKind::Comma));
+
+        LEDGER_TRY_VOID(expect(TokenKind::RParen));
+        return Statement{CreateTable{std::move(table), std::move(columns)}};
+    }
+
+    Result<ColumnDef> columnDef() {
+        LEDGER_TRY(name, identifier());
+        LEDGER_TRY(type, dataType());
+
+        ColumnDef col{std::move(name), type, false, false};
+        // Contraintes dans n'importe quel ordre, chacune au plus une fois.
+        for (;;) {
+            if (at(TokenKind::KwPrimary)) {
+                if (col.primaryKey) return unexpected("a single PRIMARY KEY constraint");
+                advance();
+                LEDGER_TRY_VOID(expect(TokenKind::KwKey));
+                col.primaryKey = true;
+            } else if (at(TokenKind::KwNot)) {
+                if (col.notNull) return unexpected("a single NOT NULL constraint");
+                advance();
+                LEDGER_TRY_VOID(expect(TokenKind::KwNull));
+                col.notNull = true;
+            } else {
+                return col;
+            }
+        }
+    }
+
+    Result<DataType> dataType() {
+        switch (peek().kind) {
+            case TokenKind::KwInt:   advance(); return DataType::Int;
+            case TokenKind::KwFloat: advance(); return DataType::Float;
+            case TokenKind::KwText:  advance(); return DataType::Text;
+            case TokenKind::KwBool:  advance(); return DataType::Bool;
+            default: return unexpected("column type (INT, FLOAT, TEXT or BOOL)");
+        }
+    }
+
+    // DROP TABLE name
+    Result<Statement> dropTable() {
+        advance();  // DROP
+        LEDGER_TRY_VOID(expect(TokenKind::KwTable));
+        LEDGER_TRY(table, identifier());
+        return Statement{DropTable{std::move(table)}};
+    }
+
+    // INSERT INTO name [( col {, col} )] VALUES ( expr {, expr} )
+    Result<Statement> insert() {
+        advance();  // INSERT
+        LEDGER_TRY_VOID(expect(TokenKind::KwInto));
+        LEDGER_TRY(table, identifier());
+
+        std::vector<std::string> columns;
+        if (accept(TokenKind::LParen)) {
+            do {
+                LEDGER_TRY(col, identifier());
+                columns.push_back(std::move(col));
+            } while (accept(TokenKind::Comma));
+            LEDGER_TRY_VOID(expect(TokenKind::RParen));
+        }
+
+        LEDGER_TRY_VOID(expect(TokenKind::KwValues));
+        LEDGER_TRY_VOID(expect(TokenKind::LParen));
+        std::vector<ExprPtr> values;
+        do {
+            LEDGER_TRY(e, expression());
+            values.push_back(std::move(e));
+        } while (accept(TokenKind::Comma));
+        LEDGER_TRY_VOID(expect(TokenKind::RParen));
+
+        return Statement{Insert{std::move(table), std::move(columns), std::move(values)}};
+    }
+
+    // SELECT (* | col {, col}) FROM name [WHERE expr] [ORDER BY col [ASC|DESC]] [LIMIT n]
+    Result<Statement> select() {
+        advance();  // SELECT
+        Select s;
+        if (!accept(TokenKind::Star)) {
+            do {
+                LEDGER_TRY(col, identifier());
+                s.columns.push_back(std::move(col));
+            } while (accept(TokenKind::Comma));
+        }
+
+        LEDGER_TRY_VOID(expect(TokenKind::KwFrom));
+        LEDGER_TRY(table, identifier());
+        s.table = std::move(table);
+
+        LEDGER_TRY(where, optionalWhere());
+        s.where = std::move(where);
+
+        if (accept(TokenKind::KwOrder)) {
+            LEDGER_TRY_VOID(expect(TokenKind::KwBy));
+            LEDGER_TRY(col, identifier());
+            bool descending = false;
+            if (accept(TokenKind::KwDesc)) descending = true;
+            else accept(TokenKind::KwAsc);
+            s.orderBy = OrderBy{std::move(col), descending};
+        }
+
+        if (accept(TokenKind::KwLimit)) {
+            // Entier littéral non signé uniquement : `LIMIT -1` ou `LIMIT n` n'a
+            // pas de sens en v1, et le refuser ici évite un cas au binder.
+            if (!at(TokenKind::Integer)) return unexpected("non-negative integer after LIMIT");
+            const Token& tok = advance();
+            auto v = Value::fromText(DataType::Int, tok.text);
+            if (!v.ok()) return errorAt(tok, v.error().message);
+            s.limit = v.value().asInt();
+        }
+
+        return Statement{std::move(s)};
+    }
+
+    // UPDATE name SET col = expr {, col = expr} [WHERE expr]
+    Result<Statement> update() {
+        advance();  // UPDATE
+        Update u;
+        LEDGER_TRY(table, identifier());
+        u.table = std::move(table);
+        LEDGER_TRY_VOID(expect(TokenKind::KwSet));
+        do {
+            LEDGER_TRY(col, identifier());
+            LEDGER_TRY_VOID(expect(TokenKind::Eq));
+            LEDGER_TRY(e, expression());
+            u.assignments.emplace_back(std::move(col), std::move(e));
+        } while (accept(TokenKind::Comma));
+        LEDGER_TRY(where, optionalWhere());
+        u.where = std::move(where);
+        return Statement{std::move(u)};
+    }
+
+    // DELETE FROM name [WHERE expr]
+    Result<Statement> del() {
+        advance();  // DELETE
+        LEDGER_TRY_VOID(expect(TokenKind::KwFrom));
+        LEDGER_TRY(table, identifier());
+        LEDGER_TRY(where, optionalWhere());
+        return Statement{Delete{std::move(table), std::move(where)}};
+    }
+
+    Result<ExprPtr> optionalWhere() {
+        if (!accept(TokenKind::KwWhere)) return ExprPtr{};
+        return expression();
+    }
+
+    // ---- expressions -------------------------------------------------------
+
+    static ExprPtr make(decltype(Expr::node) node, const Token& start) {
+        return std::make_unique<Expr>(Expr{std::move(node), start.line, start.column});
+    }
+
+    Result<ExprPtr> expression() { return orExpr(); }
+
+    // Les niveaux binaires associatifs à gauche partagent la même boucle.
+    template <typename Next>
+    Result<ExprPtr> leftAssoc(Next next, std::initializer_list<std::pair<TokenKind, BinaryOp>> ops) {
+        const Token& start = peek();
+        LEDGER_TRY(lhs, (this->*next)());
+        for (;;) {
+            const BinaryOp* op = nullptr;
+            for (const auto& [kind, candidate] : ops) {
+                if (at(kind)) { op = &candidate; break; }
+            }
+            if (!op) return lhs;
+            advance();
+            LEDGER_TRY(rhs, (this->*next)());
+            lhs = make(Binary{*op, std::move(lhs), std::move(rhs)}, start);
+        }
+    }
+
+    Result<ExprPtr> orExpr() {
+        return leftAssoc(&Parser::andExpr, {{TokenKind::KwOr, BinaryOp::Or}});
+    }
+
+    Result<ExprPtr> andExpr() {
+        return leftAssoc(&Parser::notExpr, {{TokenKind::KwAnd, BinaryOp::And}});
+    }
+
+    Result<ExprPtr> notExpr() {
+        const Token& start = peek();
+        if (accept(TokenKind::KwNot)) {
+            LEDGER_TRY(operand, notExpr());
+            return make(Unary{UnaryOp::Not, std::move(operand)}, start);
+        }
+        return comparison();
+    }
+
+    static const BinaryOp* comparisonOp(TokenKind kind) noexcept {
+        static constexpr BinaryOp kEq = BinaryOp::Eq, kNotEq = BinaryOp::NotEq, kLt = BinaryOp::Lt,
+                                  kLtEq = BinaryOp::LtEq, kGt = BinaryOp::Gt, kGtEq = BinaryOp::GtEq;
+        switch (kind) {
+            case TokenKind::Eq:    return &kEq;
+            case TokenKind::NotEq: return &kNotEq;
+            case TokenKind::Lt:    return &kLt;
+            case TokenKind::LtEq:  return &kLtEq;
+            case TokenKind::Gt:    return &kGt;
+            case TokenKind::GtEq:  return &kGtEq;
+            default:               return nullptr;
+        }
+    }
+
+    // Non associatif : `a = b = c` et `a IS NULL = b` sont rejetés.
+    Result<ExprPtr> comparison() {
+        const Token& start = peek();
+        LEDGER_TRY(lhs, additive());
+
+        if (accept(TokenKind::KwIs)) {
+            const bool negated = accept(TokenKind::KwNot);
+            LEDGER_TRY_VOID(expect(TokenKind::KwNull));
+            lhs = make(IsNull{std::move(lhs), negated}, start);
+        } else if (const BinaryOp* op = comparisonOp(peek().kind)) {
+            advance();
+            LEDGER_TRY(rhs, additive());
+            lhs = make(Binary{*op, std::move(lhs), std::move(rhs)}, start);
+        } else {
+            return lhs;
+        }
+
+        if (comparisonOp(peek().kind) || at(TokenKind::KwIs)) {
+            return errorAt(peek(), "comparison operators cannot be chained; use parentheses");
+        }
+        return lhs;
+    }
+
+    Result<ExprPtr> additive() {
+        return leftAssoc(&Parser::multiplicative,
+                         {{TokenKind::Plus, BinaryOp::Add}, {TokenKind::Minus, BinaryOp::Sub}});
+    }
+
+    Result<ExprPtr> multiplicative() {
+        return leftAssoc(&Parser::unary,
+                         {{TokenKind::Star, BinaryOp::Mul}, {TokenKind::Slash, BinaryOp::Div}});
+    }
+
+    Result<ExprPtr> unary() {
+        const Token& start = peek();
+        if (accept(TokenKind::Minus)) {
+            LEDGER_TRY(operand, unary());
+            return make(Unary{UnaryOp::Neg, std::move(operand)}, start);
+        }
+        return primary();
+    }
+
+    Result<ExprPtr> literal(DataType type) {
+        const Token& tok = advance();
+        auto v = Value::fromText(type, tok.text);
+        if (!v.ok()) return errorAt(tok, v.error().message);
+        return make(Literal{std::move(v).value()}, tok);
+    }
+
+    Result<ExprPtr> primary() {
+        const Token& tok = peek();
+        switch (tok.kind) {
+            case TokenKind::Integer: return literal(DataType::Int);
+            case TokenKind::Float:   return literal(DataType::Float);
+            case TokenKind::String:  advance(); return make(Literal{Value::text(tok.text)}, tok);
+            case TokenKind::KwTrue:  advance(); return make(Literal{Value::boolean(true)}, tok);
+            case TokenKind::KwFalse: advance(); return make(Literal{Value::boolean(false)}, tok);
+            case TokenKind::KwNull:  advance(); return make(Literal{Value::null()}, tok);
+            case TokenKind::Identifier: advance(); return make(ColumnRef{tok.text}, tok);
+            case TokenKind::LParen: {
+                advance();
+                LEDGER_TRY(inner, expression());
+                LEDGER_TRY_VOID(expect(TokenKind::RParen));
+                return inner;
+            }
+            default: return unexpected("expression");
+        }
+    }
+
+    std::vector<Token> tokens_;
+    std::size_t pos_ = 0;
+};
+
+}  // namespace
+
+Result<ast::Statement> parse(std::string_view sql) {
+    LEDGER_TRY(tokens, tokenize(sql));
+    return Parser{std::move(tokens)}.run();
+}
+
+}  // namespace ledger
