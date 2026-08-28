@@ -13,10 +13,13 @@
 
 namespace ledger {
 
+enum class ResultKind { Ddl, Dml, Select };
+
 struct QueryResult {
     std::vector<std::string> columns;  // en-têtes (SELECT uniquement)
     std::vector<Row> rows;             // lignes projetées (SELECT uniquement)
     std::size_t affected = 0;          // INSERT/UPDATE/DELETE : lignes touchées
+    ResultKind kind = ResultKind::Ddl;
 };
 
 // Déroule un BoundStatement sur un moteur de stockage. Seul endroit qui

@@ -112,7 +112,7 @@ Result<QueryResult> Executor::run(const BoundInsert& s) {
         LEDGER_TRY_VOID(checkPrimaryKey(*s.table, s.row[*pk], {}));
     }
     LEDGER_TRY_VOID(engine_.insert(s.table->name, s.row));
-    return QueryResult{{}, {}, 1};
+    return QueryResult{{}, {}, 1, ResultKind::Dml};
 }
 
 Result<QueryResult> Executor::run(const BoundSelect& s) {
@@ -131,6 +131,7 @@ Result<QueryResult> Executor::run(const BoundSelect& s) {
     }
 
     QueryResult out;
+    out.kind = ResultKind::Select;
     for (const std::size_t idx : s.projection) out.columns.push_back(s.table->columns[idx].name);
     out.rows.reserve(matches.size());
     for (auto& [id, row] : matches) {
@@ -187,13 +188,13 @@ Result<QueryResult> Executor::run(const BoundUpdate& s) {
 
     // Passe 2 : écriture.
     for (const auto& [id, row] : updated) LEDGER_TRY_VOID(engine_.update(s.table->name, id, row));
-    return QueryResult{{}, {}, updated.size()};
+    return QueryResult{{}, {}, updated.size(), ResultKind::Dml};
 }
 
 Result<QueryResult> Executor::run(const BoundDelete& s) {
     LEDGER_TRY(matches, filter(*s.table, s.where.get()));
     for (const auto& [id, row] : matches) LEDGER_TRY_VOID(engine_.remove(s.table->name, id));
-    return QueryResult{{}, {}, matches.size()};
+    return QueryResult{{}, {}, matches.size(), ResultKind::Dml};
 }
 
 }  // namespace ledger
