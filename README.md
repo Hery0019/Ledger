@@ -8,7 +8,8 @@ meant for personal use afterwards.
 ## Scope (v1)
 
 - `CREATE TABLE` / `DROP TABLE` — types `INT`, `FLOAT`, `TEXT`, `BOOL`;
-  constraints `PRIMARY KEY` (one per table, implies `NOT NULL`) and `NOT NULL`.
+  column constraints `PRIMARY KEY` (one per table, implies `NOT NULL`),
+  `NOT NULL`, `DEFAULT <constant>`.
 - `INSERT INTO t [(cols)] VALUES (...)` — one row per statement.
 - `SELECT * | t.* | expr [AS alias], ... FROM t [AS a] [[INNER|LEFT] JOIN u [AS b] ON expr ...]
   [WHERE expr] [GROUP BY expr, ...] [HAVING expr] [ORDER BY expr [ASC|DESC], ...]

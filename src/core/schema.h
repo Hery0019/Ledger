@@ -15,6 +15,14 @@ struct ColumnSchema {
     DataType type;     // never DataType::Null
     bool primaryKey;
     bool notNull;      // always true when primaryKey
+    // DEFAULT: the value used when an INSERT omits the column (a constant,
+    // already converted to the column type). Absent = NULL.
+    std::optional<Value> defaultValue;
+
+    // A constructor rather than aggregate initialization, so that adding a
+    // constraint field never touches the many `ColumnSchema{...}` call sites.
+    ColumnSchema(std::string n, DataType t, bool pk, bool nn, std::optional<Value> def = std::nullopt)
+        : name(std::move(n)), type(t), primaryKey(pk), notNull(nn), defaultValue(std::move(def)) {}
 };
 
 struct TableSchema {

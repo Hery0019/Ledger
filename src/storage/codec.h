@@ -13,7 +13,10 @@
 //
 // schema.txt:
 //   ledger-schema 1
-//   <column> <TYPE> [PK] [NN]         (PK implies NN, which is then not written)
+//   <column> <TYPE> [PK] [NN] [DEF:<value> | DEFNULL]
+//     PK implies NN, which is then not written. Attributes carrying a payload
+//     use `KEY:<payload>` with the payload escaped like a text field plus
+//     `\s` for spaces (escapeAttr), so a line stays space-separated.
 //
 // rows.txt (append-only):
 //   ledger-rows 1
@@ -29,6 +32,11 @@ inline constexpr std::string_view kRowsHeader = "ledger-rows 1";
 
 std::string escapeText(std::string_view text);
 Result<std::string> unescapeText(std::string_view field);  // Corruption on invalid escape
+
+// Same as escapeText, with spaces written `\s`: for payloads inside a
+// space-separated schema line.
+std::string escapeAttr(std::string_view text);
+Result<std::string> unescapeAttr(std::string_view field);
 
 std::string encodeValue(const Value& value);
 Result<Value> decodeValue(std::string_view field, DataType type);  // Corruption

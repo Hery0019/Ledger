@@ -132,7 +132,7 @@ TEST_CASE("decodeSchema rejects malformed files") {
     check("ledger-schema 2\na INT\n", "schema.txt: missing or unknown header (expected 'ledger-schema 1')");
     check("ledger-schema 1\n", "schema.txt: table has no columns");
     check("ledger-schema 1\na\n", "schema.txt:2: malformed column definition 'a'");
-    check("ledger-schema 1\na INT PK NN\n", "schema.txt:2: malformed column definition 'a INT PK NN'");
+    CHECK(decodeSchema("t", "ledger-schema 1\na INT PK NN\n").ok());  // redundant but valid
     check("ledger-schema 1\na DATE\n", "schema.txt:2: unknown type 'DATE'");
     check("ledger-schema 1\na INT UNIQUE\n", "schema.txt:2: unknown constraint 'UNIQUE'");
     check("ledger-schema 1\na INT\na TEXT\n", "schema.txt:3: duplicate column 'a'");

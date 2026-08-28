@@ -185,6 +185,11 @@ bool dotCommand(const Console& con, Database& db, const std::string& line, bool&
                 std::cout << c.name << ' ' << con.paint(ansi::magenta, dataTypeName(c.type));
                 if (c.primaryKey) std::cout << ' ' << con.paint(ansi::dim, "PRIMARY KEY");
                 else if (c.notNull) std::cout << ' ' << con.paint(ansi::dim, "NOT NULL");
+                if (c.defaultValue) {
+                    const bool text = c.defaultValue->type() == DataType::Text;
+                    std::cout << ' ' << con.paint(ansi::dim, "DEFAULT") << ' ' << (text ? "'" : "")
+                              << c.defaultValue->toText() << (text ? "'" : "");
+                }
             }
             std::cout << ");\n";
         }

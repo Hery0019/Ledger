@@ -83,6 +83,38 @@ Result<std::string> unescapeText(std::string_view field) {
     return out;
 }
 
+std::string escapeAttr(std::string_view text) {
+    std::string out;
+    for (const char c : escapeText(text)) {
+        if (c == ' ') out += "\\s";
+        else out += c;
+    }
+    return out;
+}
+
+Result<std::string> unescapeAttr(std::string_view field) {
+    // One pass: `\s` is a space, everything else follows unescapeText.
+    std::string out;
+    out.reserve(field.size());
+    for (std::size_t i = 0; i < field.size(); ++i) {
+        if (field[i] != '\\') {
+            out += field[i];
+            continue;
+        }
+        if (i + 1 >= field.size()) return corruption("dangling backslash in attribute");
+        switch (field[++i]) {
+            case '\\': out += '\\'; break;
+            case 't':  out += '\t'; break;
+            case 'n':  out += '\n'; break;
+            case 'r':  out += '\r'; break;
+            case 's':  out += ' '; break;
+            default:
+                return corruption(std::string("invalid escape '\\") + field[i] + "' in attribute");
+        }
+    }
+    return out;
+}
+
 // ---- values ----------------------------------------------------------------
 
 std::string encodeValue(const Value& value) {
@@ -113,6 +145,11 @@ std::string encodeSchema(const TableSchema& schema) {
         out += dataTypeName(c.type);
         if (c.primaryKey) out += " PK";
         else if (c.notNull) out += " NN";
+        // A NULL default is its own flag, so that a TEXT default of "NULL" or
+        // "\N" is never confused with it.
+        if (c.defaultValue) {
+            out += c.defaultValue->isNull() ? " DEFNULL" : " DEF:" + escapeAttr(c.defaultValue->toText());
+        }
         out += '\n';
     }
     return out;
@@ -131,16 +168,28 @@ Result<TableSchema> decodeSchema(std::string_view tableName, std::string_view co
     for (std::size_t i = 1; i < lines.size(); ++i) {
         const auto parts = split(lines[i], ' ');
         const std::string where = "schema.txt:" + std::to_string(i + 1) + ": ";
-        if (parts.size() < 2 || parts.size() > 3 || parts[0].empty()) {
+        if (parts.size() < 2 || parts[0].empty()) {
             return corruption(where + "malformed column definition '" + std::string(lines[i]) + "'");
         }
         const auto type = parseType(parts[1]);
         if (!type) return corruption(where + "unknown type '" + std::string(parts[1]) + "'");
-        ColumnSchema col{std::string(parts[0]), *type, false, false};
-        if (parts.size() == 3) {
-            if (parts[2] == "PK") col.primaryKey = col.notNull = true;
-            else if (parts[2] == "NN") col.notNull = true;
-            else return corruption(where + "unknown constraint '" + std::string(parts[2]) + "'");
+        ColumnSchema col{std::string(parts[0]), *type, false, false, std::nullopt};
+        for (std::size_t p = 2; p < parts.size(); ++p) {
+            const std::string_view flag = parts[p];
+            if (flag == "PK") {
+                col.primaryKey = col.notNull = true;
+            } else if (flag == "NN") {
+                col.notNull = true;
+            } else if (flag == "DEFNULL") {
+                col.defaultValue = Value::null();
+            } else if (flag.starts_with("DEF:")) {
+                LEDGER_TRY(text, unescapeAttr(flag.substr(4)));
+                auto v = Value::fromText(col.type, text);
+                if (!v.ok()) return corruption(where + "bad DEFAULT: " + v.error().message);
+                col.defaultValue = std::move(v).value();
+            } else {
+                return corruption(where + "unknown constraint '" + std::string(flag) + "'");
+            }
         }
         if (schema.columnIndex(col.name)) return corruption(where + "duplicate column '" + col.name + "'");
         schema.columns.push_back(std::move(col));
