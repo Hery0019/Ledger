@@ -60,6 +60,12 @@ add_library(ledger_cli
 )
 target_link_libraries(ledger_cli PUBLIC ledger_exec)
 
+# ---- server -----------------------------------------------------------------
+add_library(ledger_server
+  src/server/json.cpp
+)
+target_link_libraries(ledger_server PUBLIC ledger_cli)
+
 add_executable(ledger src/cli/main.cpp)
 target_link_libraries(ledger PRIVATE ledger_cli)
 # C++ runtime linked statically: the executable must run outside the
@@ -95,7 +101,8 @@ add_executable(ledger_tests
   tests/test_transactions.cpp
   tests/test_index.cpp
   tests/test_constraints.cpp
+  tests/test_server_json.cpp
 )
 target_include_directories(ledger_tests PRIVATE third_party)
-target_link_libraries(ledger_tests PRIVATE ledger_core ledger_sql ledger_semantic ledger_storage ledger_exec ledger_cli)
+target_link_libraries(ledger_tests PRIVATE ledger_core ledger_sql ledger_semantic ledger_storage ledger_exec ledger_cli ledger_server)
 add_test(NAME ledger_tests COMMAND ledger_tests)
