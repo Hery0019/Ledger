@@ -107,6 +107,20 @@ private:
     Result<std::vector<Row>> collect(const BoundSelect& s);
     Result<void> checkUnique(const TableSchema& table, const Row& row, const std::vector<RowId>& ignore);
     Result<void> runChecks(const TableSchema& table, const std::vector<BoundCheck>& checks, const Row& row);
+    // Every non-NULL REFERENCES value of `row` exists in its parent.
+    Result<void> checkForeignKeys(const TableSchema& table, const Row& row);
+    // Live rows of `table` whose column `column` equals `key` (a scan).
+    Result<std::vector<std::pair<RowId, Row>>> rowsWithValue(const TableSchema& table, std::size_t column,
+                                                             const Value& key);
+    // A row about to be deleted, directly or by ON DELETE CASCADE.
+    struct Doomed {
+        const TableSchema* table;
+        RowId id;
+        Row row;
+    };
+    // Extends `doomed` with the rows that ON DELETE CASCADE removes along
+    // with doomed[from..]; refuses when a restricting reference remains.
+    Result<void> cascade(std::vector<Doomed>& doomed, std::size_t from);
 
     IStorageEngine& engine_;
     Catalog& catalog_;

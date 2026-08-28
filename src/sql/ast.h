@@ -133,6 +133,13 @@ struct Expr {
 
 // ---- statements ------------------------------------------------------------
 
+// REFERENCES table(column) [ON DELETE CASCADE]
+struct ForeignKeyRef {
+    std::string table;   // folded
+    std::string column;  // folded
+    bool cascade;
+};
+
 struct ColumnDef {
     std::string name;
     DataType type;  // never DataType::Null
@@ -142,6 +149,7 @@ struct ColumnDef {
     bool unique;
     ExprPtr checkExpr;     // CHECK (expr), nullptr if absent
     std::string checkSql;  // the CHECK expression text, verbatim (stored in the schema)
+    std::optional<ForeignKeyRef> reference;
 };
 
 struct CreateTable {

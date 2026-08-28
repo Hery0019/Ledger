@@ -142,7 +142,7 @@ private:
         LEDGER_TRY(name, identifier());
         LEDGER_TRY(type, dataType());
 
-        ColumnDef col{std::move(name), type, false, false, nullptr, false, nullptr, {}};
+        ColumnDef col{std::move(name), type, false, false, nullptr, false, nullptr, {}, std::nullopt};
         // Constraints in any order, each at most once.
         for (;;) {
             if (at(TokenKind::KwDefault)) {
@@ -170,6 +170,21 @@ private:
                     text.remove_suffix(1);
                 }
                 col.checkSql = std::string(text);
+            } else if (at(TokenKind::KwReferences)) {
+                if (col.reference) return unexpected("a single REFERENCES constraint");
+                advance();
+                LEDGER_TRY(parent, identifier());
+                LEDGER_TRY_VOID(expect(TokenKind::LParen));
+                LEDGER_TRY(parentColumn, identifier());
+                LEDGER_TRY_VOID(expect(TokenKind::RParen));
+                bool cascade = false;
+                if (at(TokenKind::KwOn)) {
+                    advance();
+                    LEDGER_TRY_VOID(expect(TokenKind::KwDelete));
+                    LEDGER_TRY_VOID(expect(TokenKind::KwCascade));
+                    cascade = true;
+                }
+                col.reference = ForeignKeyRef{std::move(parent), std::move(parentColumn), cascade};
             } else if (at(TokenKind::KwPrimary)) {
                 if (col.primaryKey) return unexpected("a single PRIMARY KEY constraint");
                 advance();

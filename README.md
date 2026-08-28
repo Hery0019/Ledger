@@ -10,7 +10,10 @@ meant for personal use afterwards.
 - `CREATE TABLE` / `DROP TABLE` — types `INT`, `FLOAT`, `TEXT`, `BOOL`;
   column constraints `PRIMARY KEY` (one per table, implies `NOT NULL`),
   `NOT NULL`, `DEFAULT <constant>`, `UNIQUE` (NULLs never collide),
-  `CHECK (expr)` (a BOOL expression over the row; only FALSE rejects, NULL passes).
+  `CHECK (expr)` (a BOOL expression over the row; only FALSE rejects, NULL passes),
+  `REFERENCES parent(column) [ON DELETE CASCADE]` (the parent column must be
+  `PRIMARY KEY` or `UNIQUE`; deleting or re-keying a referenced parent row is
+  refused unless the reference cascades; a referenced table cannot be dropped).
 - `INSERT INTO t [(cols)] VALUES (...)` — one row per statement.
 - `SELECT * | t.* | expr [AS alias], ... FROM t [AS a] [[INNER|LEFT] JOIN u [AS b] ON expr ...]
   [WHERE expr] [GROUP BY expr, ...] [HAVING expr] [ORDER BY expr [ASC|DESC], ...]
@@ -124,7 +127,7 @@ data/mydb/
   LOCK                 present while a process has the database open
   views.txt            ledger-views 1   then  <view>\t<escaped SELECT>, one per line
   users/
-    schema.txt         ledger-schema 1  then  <column> <TYPE> [PK] [NN] [UQ] [CHK:<expr>] [DEF:<value>|DEFNULL]
+    schema.txt         ledger-schema 1  then  <column> <TYPE> [PK] [NN] [UQ] [CHK:<expr>] [FK:<table>.<col> [CASCADE]] [DEF:<value>|DEFNULL]
     rows.txt           ledger-rows 1    then  I <rowid>\t<fields>  or  D <rowid>
 ```
 

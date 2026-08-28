@@ -147,6 +147,10 @@ std::string encodeSchema(const TableSchema& schema) {
         else if (c.notNull) out += " NN";
         if (c.unique) out += " UQ";
         if (!c.check.empty()) out += " CHK:" + escapeAttr(c.check);
+        if (c.reference) {
+            out += " FK:" + c.reference->table + "." + c.reference->column;
+            if (c.reference->cascade) out += " CASCADE";
+        }
         // A NULL default is its own flag, so that a TEXT default of "NULL" or
         // "\N" is never confused with it.
         if (c.defaultValue) {
@@ -188,6 +192,17 @@ Result<TableSchema> decodeSchema(std::string_view tableName, std::string_view co
                 LEDGER_TRY(text, unescapeAttr(flag.substr(4)));
                 if (text.empty()) return corruption(where + "empty CHECK constraint");
                 col.check = std::move(text);
+            } else if (flag.starts_with("FK:")) {
+                const std::string_view target = flag.substr(3);
+                const auto dot = target.find('.');
+                if (dot == 0 || dot == std::string_view::npos || dot + 1 == target.size()) {
+                    return corruption(where + "bad REFERENCES target '" + std::string(target) + "'");
+                }
+                col.reference = ForeignKey{std::string(target.substr(0, dot)), std::string(target.substr(dot + 1)),
+                                           false};
+            } else if (flag == "CASCADE") {
+                if (!col.reference) return corruption(where + "CASCADE without a REFERENCES target");
+                col.reference->cascade = true;
             } else if (flag == "DEFNULL") {
                 col.defaultValue = Value::null();
             } else if (flag.starts_with("DEF:")) {

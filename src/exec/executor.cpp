@@ -243,8 +243,37 @@ Result<void> Executor::runChecks(const TableSchema& table, const std::vector<Bou
     return {};
 }
 
+Result<void> Executor::checkForeignKeys(const TableSchema& table, const Row& row) {
+    for (std::size_t c = 0; c < table.columns.size(); ++c) {
+        const ColumnSchema& col = table.columns[c];
+        if (!col.reference || row[c].isNull()) continue;
+        // The binder guaranteed the parent and its indexed column exist.
+        const TableSchema* parent = catalog_.find(col.reference->table);
+        const auto target = parent ? parent->columnIndex(col.reference->column) : std::nullopt;
+        if (!target) return makeError(ErrorCode::Internal, "dangling REFERENCES on column '" + col.name + "'");
+        LEDGER_TRY(hit, engine_.lookup(parent->name, *target, row[c]));
+        if (!hit) {
+            return makeError(ErrorCode::ConstraintViolation,
+                             "foreign key on column '" + col.name + "': no row in '" + parent->name + "' with " +
+                                 col.reference->column + " = " + row[c].toText());
+        }
+    }
+    return {};
+}
+
+Result<std::vector<std::pair<RowId, Row>>> Executor::rowsWithValue(const TableSchema& table, std::size_t column,
+                                                                   const Value& key) {
+    std::vector<std::pair<RowId, Row>> out;
+    LEDGER_TRY_VOID(engine_.scan(table.name, [&](RowId id, const Row& row) {
+        if (Value::compare(row[column], key).value() == Ordering::Equal) out.emplace_back(id, row);
+        return true;
+    }));
+    return out;
+}
+
 Result<QueryResult> Executor::run(const BoundInsert& s) {
     LEDGER_TRY_VOID(runChecks(*s.table, s.checks, s.row));
+    LEDGER_TRY_VOID(checkForeignKeys(*s.table, s.row));
     LEDGER_TRY_VOID(checkUnique(*s.table, s.row, {}));
     LEDGER_TRY(id, engine_.insert(s.table->name, s.row));
     if (undo_) undo_->push_back(Undo{Undo::Kind::Insert, s.table->name, id, {}});
@@ -629,7 +658,27 @@ Result<QueryResult> Executor::run(const BoundUpdate& s) {
             next[col] = std::move(v).value();
         }
         if (auto c = runChecks(*s.table, s.checks, next); !c.ok()) return rowError(id, c.error());
+        if (auto c = checkForeignKeys(*s.table, next); !c.ok()) return rowError(id, c.error());
         updated.emplace_back(id, std::move(next));
+    }
+
+    // A referenced key cannot change while a row still points at it (there
+    // is no ON UPDATE CASCADE).
+    for (const auto& [child, column] : catalog_.referencing(s.table->name)) {
+        const auto target = s.table->columnIndex(child->columns[column].reference->column);
+        for (std::size_t i = 0; i < updated.size(); ++i) {
+            const Value& before = matches[i].second[*target];
+            if (before.isNull() || Value::compare(before, updated[i].second[*target]).value() == Ordering::Equal) {
+                continue;
+            }
+            LEDGER_TRY(users, rowsWithValue(*child, column, before));
+            if (!users.empty()) {
+                return makeError(ErrorCode::ConstraintViolation,
+                                 "row " + std::to_string(matches[i].first) + ": " + s.table->columns[*target].name +
+                                     " = " + before.toText() + " is referenced by " + child->name + "." +
+                                     child->columns[column].name);
+            }
+        }
     }
 
     // PRIMARY KEY / UNIQUE: every new value against the untouched rows and
@@ -667,11 +716,50 @@ Result<QueryResult> Executor::run(const BoundUpdate& s) {
     return QueryResult{{}, {}, updated.size(), ResultKind::Dml};
 }
 
+Result<void> Executor::cascade(std::vector<Doomed>& doomed, std::size_t from) {
+    const auto isDoomed = [&](const TableSchema* table, RowId id) {
+        return std::any_of(doomed.begin(), doomed.end(),
+                           [&](const Doomed& d) { return d.table == table && d.id == id; });
+    };
+    // `doomed` grows while it is walked: rows added by a cascade are examined
+    // in their turn, so a chain of cascades goes all the way down.
+    for (std::size_t i = from; i < doomed.size(); ++i) {
+        for (const auto& [child, column] : catalog_.referencing(doomed[i].table->name)) {
+            const ForeignKey& fk = *child->columns[column].reference;
+            const auto target = doomed[i].table->columnIndex(fk.column);
+            const Value key = doomed[i].row[*target];  // a copy: doomed may reallocate
+            if (key.isNull()) continue;
+            LEDGER_TRY(users, rowsWithValue(*child, column, key));
+            for (auto& [id, row] : users) {
+                // Rows already going (deleted by the statement itself, or by
+                // an earlier cascade) never hold a parent back.
+                if (isDoomed(child, id)) continue;
+                if (!fk.cascade) {
+                    return makeError(ErrorCode::ConstraintViolation,
+                                     "row " + std::to_string(doomed[i].id) + " of '" + doomed[i].table->name +
+                                         "' is referenced by " + child->name + "." + child->columns[column].name +
+                                         " (row " + std::to_string(id) + ")");
+                }
+                doomed.push_back(Doomed{child, id, std::move(row)});
+            }
+        }
+    }
+    return {};
+}
+
 Result<QueryResult> Executor::run(const BoundDelete& s) {
     LEDGER_TRY(matches, filter(*s.table, s.where.get()));
-    for (const auto& [id, row] : matches) {
-        if (undo_) undo_->push_back(Undo{Undo::Kind::Delete, s.table->name, id, row});
-        LEDGER_TRY_VOID(engine_.remove(s.table->name, id));
+    // Pass 1: the full set of rows to delete (ON DELETE CASCADE included),
+    // and every RESTRICT violation, before anything is written.
+    std::vector<Doomed> doomed;
+    doomed.reserve(matches.size());
+    for (auto& [id, row] : matches) doomed.push_back(Doomed{s.table, id, std::move(row)});
+    LEDGER_TRY_VOID(cascade(doomed, 0));
+    // Pass 2: children first, so that a crash mid-way never leaves a
+    // referencing row without its parent.
+    for (auto it = doomed.rbegin(); it != doomed.rend(); ++it) {
+        if (undo_) undo_->push_back(Undo{Undo::Kind::Delete, it->table->name, it->id, it->row});
+        LEDGER_TRY_VOID(engine_.remove(it->table->name, it->id));
     }
     return QueryResult{{}, {}, matches.size(), ResultKind::Dml};
 }

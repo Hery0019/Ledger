@@ -187,6 +187,11 @@ bool dotCommand(const Console& con, Database& db, const std::string& line, bool&
                 else if (c.notNull) std::cout << ' ' << con.paint(ansi::dim, "NOT NULL");
                 if (c.unique) std::cout << ' ' << con.paint(ansi::dim, "UNIQUE");
                 if (!c.check.empty()) std::cout << ' ' << con.paint(ansi::dim, "CHECK") << " (" << c.check << ')';
+                if (c.reference) {
+                    std::cout << ' ' << con.paint(ansi::dim, "REFERENCES") << ' ' << c.reference->table << '('
+                              << c.reference->column << ')';
+                    if (c.reference->cascade) std::cout << ' ' << con.paint(ansi::dim, "ON DELETE CASCADE");
+                }
                 if (c.defaultValue) {
                     const bool text = c.defaultValue->type() == DataType::Text;
                     std::cout << ' ' << con.paint(ansi::dim, "DEFAULT") << ' ' << (text ? "'" : "")
