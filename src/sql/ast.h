@@ -93,8 +93,17 @@ struct Like {
     bool negated;
 };
 
+// `CASE [x] WHEN a THEN b [WHEN ...] [ELSE c] END`. With an operand, each
+// WHEN compares `x = a`; without, each WHEN is a boolean condition. Missing
+// ELSE yields NULL.
+struct Case {
+    ExprPtr operand;  // nullptr for the searched form
+    std::vector<std::pair<ExprPtr, ExprPtr>> whens;  // (condition or value, result); never empty
+    ExprPtr elseExpr;  // nullptr if absent
+};
+
 struct Expr {
-    std::variant<Literal, ColumnRef, Unary, Binary, IsNull, Call, InList, Between, Like> node;
+    std::variant<Literal, ColumnRef, Unary, Binary, IsNull, Call, InList, Between, Like, Case> node;
     // Position of the expression's first token, for binder error messages.
     std::size_t line;
     std::size_t column;

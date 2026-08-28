@@ -21,6 +21,8 @@ meant for personal use afterwards.
   read-only. `ORDER BY` and `LIMIT` are not allowed inside a view definition.
   Dropping a table or view that another view reads from is refused.
 - `SELECT DISTINCT ...`, `LIMIT n OFFSET m`.
+- Scalar functions `UPPER`, `LOWER`, `LENGTH`, `TRIM`, `ABS`, `ROUND(x [, digits])`,
+  `COALESCE(...)`, `NULLIF(a, b)`; `CASE [x] WHEN ... THEN ... [ELSE ...] END`.
 - Expressions: `+ - * /`, comparisons, `AND OR NOT`, `IS [NOT] NULL`,
   `[NOT] IN (...)`, `[NOT] BETWEEN a AND b`, `[NOT] LIKE 'pattern'` (`%`, `_`),
   SQL three-valued logic. Case-insensitive identifiers.
