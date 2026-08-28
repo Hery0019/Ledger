@@ -64,6 +64,7 @@ std::string_view dataTypeName(DataType type) noexcept {
         case DataType::Float: return "FLOAT";
         case DataType::Text:  return "TEXT";
         case DataType::Bool:  return "BOOL";
+        case DataType::Uuid:  return "UUID";
     }
     return "UNKNOWN";
 }
@@ -86,6 +87,7 @@ DataType Value::type() const noexcept {
         case 2: return DataType::Float;
         case 3: return DataType::Text;
         case 4: return DataType::Bool;
+        case 5: return DataType::Uuid;
         default: return DataType::Null;  // unreachable: the variant is never valueless here
     }
 }
@@ -108,6 +110,11 @@ const std::string& Value::asText() const {
 bool Value::asBool() const {
     if (auto* p = std::get_if<bool>(&data_)) return *p;
     badAccess(DataType::Bool, type());
+}
+
+const Uuid& Value::asUuid() const {
+    if (auto* p = std::get_if<Uuid>(&data_)) return *p;
+    badAccess(DataType::Uuid, type());
 }
 
 // ---- text codec -------------------------------------------------------------
@@ -135,6 +142,11 @@ Result<Value> Value::fromText(DataType type, std::string_view text) {
             if (equalsIgnoreCase(text, "false")) return Value::boolean(false);
             return makeError(ErrorCode::TypeError,
                              "invalid BOOL literal: '" + std::string(text) + "'");
+
+        case DataType::Uuid: {
+            LEDGER_TRY(v, parseUuid(text));
+            return Value::uuid(v);
+        }
     }
     return makeError(ErrorCode::Internal, "fromText: unknown DataType");
 }
@@ -155,6 +167,8 @@ std::string Value::toText() const {
             return asText();
         case DataType::Bool:
             return asBool() ? "true" : "false";
+        case DataType::Uuid:
+            return formatUuid(asUuid());
     }
     return {};
 }
@@ -173,6 +187,7 @@ Result<Ordering> Value::compare(const Value& lhs, const Value& rhs) {
             case DataType::Float: return orderOf(lhs.asFloat(), rhs.asFloat());
             case DataType::Text:  return orderOf(lhs.asText(), rhs.asText());
             case DataType::Bool:  return orderOf(lhs.asBool(), rhs.asBool());
+            case DataType::Uuid:  return orderOf(lhs.asUuid(), rhs.asUuid());
             case DataType::Null:  break;  // already handled
         }
     }

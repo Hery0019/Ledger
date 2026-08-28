@@ -37,6 +37,9 @@ std::string toJson(const Value& value) {
             return "null";
         case DataType::Text:
             return jsonString(value.asText());
+        case DataType::Uuid:
+            // JSON has no UUID type: the canonical text form, as a string.
+            return jsonString(value.toText());
         case DataType::Int:
         case DataType::Float:
         case DataType::Bool:
