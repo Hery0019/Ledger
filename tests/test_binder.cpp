@@ -155,13 +155,23 @@ TEST_CASE("bind INSERT errors") {
 
 // ---- SELECT ----------------------------------------------------------------
 
+namespace {
+// Index of the column a projection reads, when it is a plain column.
+std::size_t columnIndex(const BoundExprPtr& e) {
+    REQUIRE(std::holds_alternative<BoundColumn>(e->node));
+    return std::get<BoundColumn>(e->node).index;
+}
+}  // namespace
+
 TEST_CASE("bind SELECT * expands the projection") {
     const Catalog cat = catalog();
     const auto s = bindAs<BoundSelect>("SELECT * FROM users", cat);
     CHECK(s.table == cat.find("users"));
-    CHECK(s.projection == std::vector<std::size_t>{0, 1, 2, 3});
+    CHECK(s.columnNames == std::vector<std::string>{"id", "name", "score", "active"});
+    REQUIRE(s.projection.size() == 4);
+    for (std::size_t i = 0; i < 4; ++i) CHECK(columnIndex(s.projection[i]) == i);
     CHECK(s.where == nullptr);
-    CHECK_FALSE(s.orderBy.has_value());
+    CHECK(s.orderBy.empty());
     CHECK_FALSE(s.limit.has_value());
 }
 
@@ -169,21 +179,53 @@ TEST_CASE("bind SELECT resolves columns, ORDER BY and LIMIT") {
     const Catalog cat = catalog();
     const auto s = bindAs<BoundSelect>(
         "SELECT name, id, name FROM users WHERE active ORDER BY score DESC LIMIT 3", cat);
-    CHECK(s.projection == std::vector<std::size_t>{1, 0, 1});
+    CHECK(s.columnNames == std::vector<std::string>{"name", "id", "name"});
+    REQUIRE(s.projection.size() == 3);
+    CHECK(columnIndex(s.projection[0]) == 1);
+    CHECK(columnIndex(s.projection[1]) == 0);
+    CHECK(columnIndex(s.projection[2]) == 1);
     REQUIRE(s.where != nullptr);
     CHECK(s.where->type == DataType::Bool);
-    REQUIRE(s.orderBy.has_value());
-    CHECK(s.orderBy->column == 2);
-    CHECK(s.orderBy->descending);
+    REQUIRE(s.orderBy.size() == 1);
+    CHECK(columnIndex(s.orderBy[0].expr) == 2);
+    CHECK(s.orderBy[0].descending);
     CHECK(s.limit == 3);
+}
+
+TEST_CASE("bind SELECT expressions, aliases and output names") {
+    const Catalog cat = catalog();
+    const auto s = bindAs<BoundSelect>(
+        "SELECT id * 2 AS double_id, score + 1, name, 'x' AS tag, id + 0.5 FROM users", cat);
+    CHECK(s.columnNames == std::vector<std::string>{"double_id", "score + 1", "name", "tag", "id + 0.5"});
+    REQUIRE(s.projection.size() == 5);
+    CHECK(s.projection[0]->type == DataType::Int);
+    CHECK(s.projection[1]->type == DataType::Float);
+    CHECK(s.projection[2]->type == DataType::Text);
+    CHECK(std::holds_alternative<Value>(s.projection[3]->node));  // folded constant
+    CHECK(s.projection[4]->type == DataType::Float);
+    CHECK(errorOf("SELECT name + 1 FROM users", cat).message == "1:8: cannot apply '+' to TEXT and INT");
+}
+
+TEST_CASE("bind ORDER BY: output alias first, then any source column, then expressions") {
+    const Catalog cat = catalog();
+    auto s = bindAs<BoundSelect>("SELECT id * 2 AS k FROM users ORDER BY k DESC, name", cat);
+    REQUIRE(s.orderBy.size() == 2);
+    CHECK(std::holds_alternative<BoundBinary>(s.orderBy[0].expr->node));  // the alias's expression
+    CHECK(s.orderBy[0].descending);
+    CHECK(columnIndex(s.orderBy[1].expr) == 1);  // hidden column is fine
+    s = bindAs<BoundSelect>("SELECT name FROM users ORDER BY score * -1", cat);
+    CHECK(std::holds_alternative<BoundBinary>(s.orderBy[0].expr->node));
+    // An alias shadows a same-named source column.
+    s = bindAs<BoundSelect>("SELECT score AS id FROM users ORDER BY id", cat);
+    CHECK(columnIndex(s.orderBy[0].expr) == 2);
 }
 
 TEST_CASE("bind SELECT errors") {
     const Catalog cat = catalog();
     CHECK(errorOf("SELECT * FROM nope", cat).message == "unknown table or view 'nope'");
-    CHECK(errorOf("SELECT nope FROM users", cat).message == "unknown column 'nope' in table 'users'");
+    CHECK(errorOf("SELECT nope FROM users", cat).message == "1:8: unknown column 'nope' in table 'users'");
     CHECK(errorOf("SELECT * FROM users ORDER BY nope", cat).message ==
-          "unknown column 'nope' in table 'users'");
+          "1:30: unknown column 'nope' in table 'users'");
     auto e = errorOf("SELECT * FROM users WHERE nope = 1", cat);
     CHECK(e.code == ErrorCode::NotFound);
     CHECK(e.message == "1:27: unknown column 'nope' in table 'users'");

@@ -144,28 +144,52 @@ Result<QueryResult> Executor::run(const BoundInsert& s) {
 Result<QueryResult> Executor::run(const BoundSelect& s) {
     LEDGER_TRY(matches, filter(*s.table, s.where.get()));
 
-    if (s.orderBy) {
-        const std::size_t col = s.orderBy->column;
-        const bool desc = s.orderBy->descending;
-        std::stable_sort(matches.begin(), matches.end(), [&](const auto& a, const auto& b) {
-            return desc ? lessForSort(b.second[col], a.second[col])
-                        : lessForSort(a.second[col], b.second[col]);
+    // Sort keys and projected values are both computed from the source row,
+    // so ORDER BY may use columns the projection does not keep.
+    struct Item {
+        Row keys;
+        Row projected;
+    };
+    std::vector<Item> items;
+    items.reserve(matches.size());
+    for (const auto& [id, row] : matches) {
+        Item item;
+        item.keys.reserve(s.orderBy.size());
+        for (const auto& ob : s.orderBy) {
+            auto v = eval(*ob.expr, row);
+            if (!v.ok()) return rowError(id, v.error());
+            item.keys.push_back(std::move(v).value());
+        }
+        item.projected.reserve(s.projection.size());
+        for (const auto& e : s.projection) {
+            auto v = eval(*e, row);
+            if (!v.ok()) return rowError(id, v.error());
+            item.projected.push_back(std::move(v).value());
+        }
+        items.push_back(std::move(item));
+    }
+
+    if (!s.orderBy.empty()) {
+        std::stable_sort(items.begin(), items.end(), [&](const Item& a, const Item& b) {
+            for (std::size_t k = 0; k < s.orderBy.size(); ++k) {
+                const bool desc = s.orderBy[k].descending;
+                const Value& x = desc ? b.keys[k] : a.keys[k];
+                const Value& y = desc ? a.keys[k] : b.keys[k];
+                if (lessForSort(x, y)) return true;
+                if (lessForSort(y, x)) return false;
+            }
+            return false;
         });
     }
-    if (s.limit && static_cast<std::size_t>(*s.limit) < matches.size()) {
-        matches.resize(static_cast<std::size_t>(*s.limit));
+    if (s.limit && static_cast<std::size_t>(*s.limit) < items.size()) {
+        items.resize(static_cast<std::size_t>(*s.limit));
     }
 
     QueryResult out;
     out.kind = ResultKind::Select;
-    for (const std::size_t idx : s.projection) out.columns.push_back(s.table->columns[idx].name);
-    out.rows.reserve(matches.size());
-    for (auto& [id, row] : matches) {
-        Row projected;
-        projected.reserve(s.projection.size());
-        for (const std::size_t idx : s.projection) projected.push_back(row[idx]);
-        out.rows.push_back(std::move(projected));
-    }
+    out.columns = s.columnNames;
+    out.rows.reserve(items.size());
+    for (auto& item : items) out.rows.push_back(std::move(item.projected));
     return out;
 }
 

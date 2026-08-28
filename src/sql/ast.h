@@ -32,6 +32,10 @@ enum class BinaryOp { Or, And, Eq, NotEq, Lt, LtEq, Gt, GtEq, Add, Sub, Mul, Div
 std::string_view unaryOpName(UnaryOp op) noexcept;
 std::string_view binaryOpName(BinaryOp op) noexcept;
 
+// Renders an expression back to SQL-like text: `a + 1`, `NOT (x IS NULL)`.
+// Used to name unaliased SELECT columns and in error messages.
+std::string exprToString(const Expr& e);
+
 struct Literal {
     Value value;  // Int/Float/Text/Bool/Null, already converted by the parser
 };
@@ -89,16 +93,25 @@ struct Insert {
     std::vector<ExprPtr> values;       // never empty; a single row in v1
 };
 
+// One item of the SELECT list: an expression and its output name.
+// `alias` is empty when none was given; the binder then names the column
+// after the expression (a bare column keeps its name).
+struct SelectItem {
+    ExprPtr expr;
+    std::string alias;
+};
+
 struct OrderBy {
-    std::string column;
+    ExprPtr expr;  // an output alias, a column, or any expression
     bool descending;
 };
 
 struct Select {
-    std::vector<std::string> columns;  // empty = `*`
+    bool star;                      // `SELECT *`
+    std::vector<SelectItem> items;  // empty when star
     std::string table;
     ExprPtr where;  // nullptr if absent
-    std::optional<OrderBy> orderBy;
+    std::vector<OrderBy> orderBy;   // empty if absent
     std::optional<std::int64_t> limit;  // >= 0 if present
 };
 

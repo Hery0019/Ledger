@@ -137,6 +137,28 @@ TEST_CASE("exec ORDER BY on a column that is not projected") {
     CHECK(column(r.rows, 0) == std::vector<Value>{t("dave"), t("carol"), t("bob"), t("alice")});
 }
 
+TEST_CASE("exec SELECT with expressions, aliases and multi-key ORDER BY") {
+    Db db = seeded();
+    const auto r = db.run("SELECT name, score * 2 AS dbl, id + 100 FROM users WHERE score IS NOT NULL ORDER BY dbl DESC");
+    CHECK(r.columns == std::vector<std::string>{"name", "dbl", "id + 100"});
+    REQUIRE(r.rows.size() == 2);
+    CHECK(r.rows[0] == Row{t("alice"), f(7.0), i(101)});
+    CHECK(r.rows[1] == Row{t("carol"), f(2.0), i(103)});
+
+    db.run("INSERT INTO users VALUES (5, 'eve', 3.5, FALSE)");
+    // Ties on the first key are broken by the second, in its own direction.
+    // (NULL scores sort last in DESC; the tie between them is broken by id too.)
+    CHECK(column(db.rows("SELECT id FROM users ORDER BY score DESC, id DESC"), 0) ==
+          std::vector<Value>{i(5), i(1), i(3), i(4), i(2)});
+    CHECK(column(db.rows("SELECT id FROM users ORDER BY score DESC, id ASC"), 0) ==
+          std::vector<Value>{i(1), i(5), i(3), i(2), i(4)});
+    // ORDER BY on an expression that is not projected.
+    CHECK(column(db.rows("SELECT name FROM users ORDER BY -id"), 0) ==
+          std::vector<Value>{t("eve"), t("dave"), t("carol"), t("bob"), t("alice")});
+    // A projection error on a row is reported with its rowid.
+    CHECK(db.fail("SELECT 10 / (id - 2) FROM users").message == "row 2: division by zero");
+}
+
 TEST_CASE("exec LIMIT applies after ORDER BY") {
     Db db = seeded();
     CHECK(column(db.rows("SELECT id FROM users ORDER BY id DESC LIMIT 2"), 0) ==

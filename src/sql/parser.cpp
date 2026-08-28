@@ -174,7 +174,7 @@ private:
             text.pop_back();
         }
         Select query = std::get<Select>(std::move(stmt));
-        if (query.orderBy || query.limit) {
+        if (!query.orderBy.empty() || query.limit) {
             return makeError(ErrorCode::SyntaxError,
                              "view '" + name + "': ORDER BY and LIMIT are not allowed in a view");
         }
@@ -215,14 +215,24 @@ private:
         return Statement{Insert{std::move(table), std::move(columns), std::move(values)}};
     }
 
-    // SELECT (* | col {, col}) FROM name [WHERE expr] [ORDER BY col [ASC|DESC]] [LIMIT n]
+    // SELECT (* | item {, item}) FROM name [WHERE expr]
+    //        [ORDER BY expr [ASC|DESC] {, expr [ASC|DESC]}] [LIMIT n]
+    // item := expr [[AS] alias]
     Result<Statement> select() {
         advance();  // SELECT
         Select s;
-        if (!accept(TokenKind::Star)) {
+        s.star = accept(TokenKind::Star);
+        if (!s.star) {
             do {
-                LEDGER_TRY(col, identifier());
-                s.columns.push_back(std::move(col));
+                LEDGER_TRY(e, expression());
+                std::string alias;
+                if (accept(TokenKind::KwAs)) {
+                    LEDGER_TRY(name, identifier());
+                    alias = std::move(name);
+                } else if (at(TokenKind::Identifier)) {
+                    alias = advance().text;  // `expr alias` without AS
+                }
+                s.items.push_back(SelectItem{std::move(e), std::move(alias)});
             } while (accept(TokenKind::Comma));
         }
 
@@ -235,11 +245,13 @@ private:
 
         if (accept(TokenKind::KwOrder)) {
             LEDGER_TRY_VOID(expect(TokenKind::KwBy));
-            LEDGER_TRY(col, identifier());
-            bool descending = false;
-            if (accept(TokenKind::KwDesc)) descending = true;
-            else accept(TokenKind::KwAsc);
-            s.orderBy = OrderBy{std::move(col), descending};
+            do {
+                LEDGER_TRY(e, expression());
+                bool descending = false;
+                if (accept(TokenKind::KwDesc)) descending = true;
+                else accept(TokenKind::KwAsc);
+                s.orderBy.push_back(OrderBy{std::move(e), descending});
+            } while (accept(TokenKind::Comma));
         }
 
         if (accept(TokenKind::KwLimit)) {
