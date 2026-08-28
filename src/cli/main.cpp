@@ -230,12 +230,26 @@ int repl(const Console& con, Database& db) {
     return 0;
 }
 
+// Script mode. LEDGER_ECHO=1 prints each statement behind a prompt before
+// its result, so that a piped session reads like the REPL (used to capture
+// the README screenshots); LEDGER_BANNER=1 prints the banner first.
 int script(const Console& con, Database& db) {
     std::ostringstream all;
     all << std::cin.rdbuf();
     const std::string text = all.str();
+    const char* echoEnv = std::getenv("LEDGER_ECHO");
+    const char* bannerEnv = std::getenv("LEDGER_BANNER");
+    const bool echo = echoEnv && *echoEnv;
+    if (bannerEnv && *bannerEnv) {
+        std::cout << '\n' << formatLogo(con.style) << '\n'
+                  << con.paint(ansi::bold, "  embedded SQL, plain-text storage") << con.paint(ansi::dim, "  ·  ")
+                  << db.directory().string() << "\n\n";
+    }
+    const std::string prompt = con.paint(ansi::green, "ledger") + con.paint(ansi::dim, "> ");
     for (const auto& s : splitStatements(text)) {
+        if (echo) std::cout << prompt << con.paint(ansi::cyan, s.sql) << ";\n";
         if (!runOne(con, db, s.sql, s.line)) return 1;
+        if (echo) std::cout << '\n';
     }
     return 0;
 }
