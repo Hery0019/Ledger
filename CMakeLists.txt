@@ -85,6 +85,7 @@ add_executable(ledger_tests
   tests/test_file_engine.cpp
   tests/test_executor.cpp
   tests/test_cli.cpp
+  tests/test_views.cpp
 )
 target_include_directories(ledger_tests PRIVATE third_party)
 target_link_libraries(ledger_tests PRIVATE ledger_core ledger_sql ledger_semantic ledger_storage ledger_exec ledger_cli)

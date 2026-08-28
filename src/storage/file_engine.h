@@ -15,6 +15,7 @@ namespace ledger {
 // Text-file engine: one directory per table under the database directory.
 //
 //   <base>/LOCK               present while a process has the database open
+//   <base>/views.txt          `ledger-views 1`, then one `name<TAB>escaped sql` per view
 //   <base>/<table>/schema.txt
 //   <base>/<table>/rows.txt   append-only, see storage/codec.h
 //
@@ -47,6 +48,8 @@ public:
     Result<void> remove(std::string_view table, RowId id) override;
     Result<void> compact(std::string_view table) override;
     Result<std::vector<TableSchema>> loadSchemas() override;
+    Result<void> saveViews(const std::vector<ViewDef>& views) override;
+    Result<std::vector<ViewDef>> loadViews() override;
 
     // Accumulated warnings (dropped truncated lines...). Cleared on call.
     std::vector<std::string> takeWarnings();

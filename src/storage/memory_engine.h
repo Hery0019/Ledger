@@ -20,6 +20,8 @@ public:
     Result<void> remove(std::string_view table, RowId id) override;
     Result<void> compact(std::string_view table) override;
     Result<std::vector<TableSchema>> loadSchemas() override;
+    Result<void> saveViews(const std::vector<ViewDef>& views) override;
+    Result<std::vector<ViewDef>> loadViews() override;
 
 private:
     struct Table {
@@ -30,6 +32,7 @@ private:
     Result<Table*> find(std::string_view table);
 
     std::map<std::string, Table, std::less<>> tables_;
+    std::vector<ViewDef> views_;
 };
 
 }  // namespace ledger

@@ -46,6 +46,8 @@ public:
 private:
     Result<QueryResult> run(const BoundCreateTable& s);
     Result<QueryResult> run(const BoundDropTable& s);
+    Result<QueryResult> run(const BoundCreateView& s);
+    Result<QueryResult> run(const BoundDropView& s);
     Result<QueryResult> run(const BoundInsert& s);
     Result<QueryResult> run(const BoundSelect& s);
     Result<QueryResult> run(const BoundUpdate& s);

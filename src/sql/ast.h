@@ -113,6 +113,21 @@ struct Delete {
     ExprPtr where;  // nullptr if absent
 };
 
-using Statement = std::variant<CreateTable, DropTable, Insert, Select, Update, Delete>;
+// CREATE VIEW name AS SELECT ... — the SELECT is kept both parsed (to
+// validate it) and verbatim (to persist it). ORDER BY and LIMIT are refused in
+// a view: a view is a table + projection + filter, nothing more, so that
+// `SELECT ... FROM view WHERE ...` composes without surprises.
+struct CreateView {
+    std::string name;
+    Select query;
+    std::string queryText;  // the SELECT as written, without the trailing `;`
+};
+
+struct DropView {
+    std::string name;
+};
+
+using Statement =
+    std::variant<CreateTable, DropTable, CreateView, DropView, Insert, Select, Update, Delete>;
 
 }  // namespace ledger::ast

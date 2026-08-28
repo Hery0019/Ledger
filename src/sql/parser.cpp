@@ -15,7 +15,8 @@ using namespace ast;
 
 class Parser {
 public:
-    explicit Parser(std::vector<Token> tokens) noexcept : tokens_(std::move(tokens)) {}
+    Parser(std::vector<Token> tokens, std::string_view src) noexcept
+        : tokens_(std::move(tokens)), src_(src) {}
 
     Result<Statement> run() {
         LEDGER_TRY(stmt, statement());
@@ -78,8 +79,8 @@ private:
 
     Result<Statement> statement() {
         switch (peek().kind) {
-            case TokenKind::KwCreate: return createTable();
-            case TokenKind::KwDrop:   return dropTable();
+            case TokenKind::KwCreate: return create();
+            case TokenKind::KwDrop:   return drop();
             case TokenKind::KwInsert: return insert();
             case TokenKind::KwSelect: return select();
             case TokenKind::KwUpdate: return update();
@@ -88,10 +89,23 @@ private:
         }
     }
 
+    Result<Statement> create() {
+        advance();  // CREATE
+        if (at(TokenKind::KwView)) return createView();
+        if (at(TokenKind::KwTable)) return createTable();
+        return unexpected("'TABLE' or 'VIEW'");
+    }
+
+    Result<Statement> drop() {
+        advance();  // DROP
+        if (at(TokenKind::KwView)) return dropView();
+        if (at(TokenKind::KwTable)) return dropTable();
+        return unexpected("'TABLE' or 'VIEW'");
+    }
+
     // CREATE TABLE name ( col type [PRIMARY KEY] [NOT NULL] {, ...} )
     Result<Statement> createTable() {
-        advance();  // CREATE
-        LEDGER_TRY_VOID(expect(TokenKind::KwTable));
+        advance();  // TABLE
         LEDGER_TRY(table, identifier());
         LEDGER_TRY_VOID(expect(TokenKind::LParen));
 
@@ -140,10 +154,38 @@ private:
 
     // DROP TABLE name
     Result<Statement> dropTable() {
-        advance();  // DROP
-        LEDGER_TRY_VOID(expect(TokenKind::KwTable));
+        advance();  // TABLE
         LEDGER_TRY(table, identifier());
         return Statement{DropTable{std::move(table)}};
+    }
+
+    // CREATE VIEW name AS SELECT ...
+    Result<Statement> createView() {
+        advance();  // VIEW
+        LEDGER_TRY(name, identifier());
+        LEDGER_TRY_VOID(expect(TokenKind::KwAs));
+        if (!at(TokenKind::KwSelect)) return unexpected("SELECT after AS");
+        const std::size_t start = peek().offset;
+        LEDGER_TRY(stmt, select());
+        // The view text runs up to the `;` or the end of input.
+        std::string text(src_.substr(start, peek().offset - start));
+        while (!text.empty() && (text.back() == ' ' || text.back() == '\t' ||
+                                 text.back() == '\n' || text.back() == '\r')) {
+            text.pop_back();
+        }
+        Select query = std::get<Select>(std::move(stmt));
+        if (query.orderBy || query.limit) {
+            return makeError(ErrorCode::SyntaxError,
+                             "view '" + name + "': ORDER BY and LIMIT are not allowed in a view");
+        }
+        return Statement{CreateView{std::move(name), std::move(query), std::move(text)}};
+    }
+
+    // DROP VIEW name
+    Result<Statement> dropView() {
+        advance();  // VIEW
+        LEDGER_TRY(name, identifier());
+        return Statement{DropView{std::move(name)}};
     }
 
     // INSERT INTO name [( col {, col} )] VALUES ( expr {, expr} )
@@ -371,6 +413,7 @@ private:
     }
 
     std::vector<Token> tokens_;
+    std::string_view src_;
     std::size_t pos_ = 0;
 };
 
@@ -378,7 +421,7 @@ private:
 
 Result<ast::Statement> parse(std::string_view sql) {
     LEDGER_TRY(tokens, tokenize(sql));
-    return Parser{std::move(tokens)}.run();
+    return Parser{std::move(tokens), sql}.run();
 }
 
 }  // namespace ledger

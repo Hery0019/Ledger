@@ -78,6 +78,7 @@ TEST_CASE("exec DROP TABLE removes it from both") {
     CHECK(db.engine.loadSchemas().value().empty());
     CHECK(db.fail("DROP TABLE t").code == ErrorCode::NotFound);
     CHECK(db.fail("SELECT * FROM t").code == ErrorCode::NotFound);
+    CHECK(db.fail("SELECT * FROM t").message == "unknown table or view 't'");
 }
 
 // ---- INSERT / SELECT -------------------------------------------------------

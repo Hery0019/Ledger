@@ -77,4 +77,11 @@ Result<std::vector<TableSchema>> MemoryEngine::loadSchemas() {
     return out;
 }
 
+Result<void> MemoryEngine::saveViews(const std::vector<ViewDef>& views) {
+    views_ = views;
+    return {};
+}
+
+Result<std::vector<ViewDef>> MemoryEngine::loadViews() { return views_; }
+
 }  // namespace ledger

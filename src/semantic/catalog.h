@@ -12,26 +12,60 @@
 
 namespace ledger {
 
-// The set of known schemas. In memory, single process: the storage layer
-// fills it at startup (reading the schema.txt files) and keeps it up to date
-// after each effective CREATE/DROP. The catalog itself never touches the disk.
+// A registered view: its definition plus the name of what it reads from (a
+// table or another view), used for dependency checks on DROP.
+struct ViewEntry {
+    ViewDef def;
+    std::string source;
+};
+
+// The set of known schemas and views. In memory, single process: the storage
+// layer fills it at startup (reading the schema.txt files and views.txt) and
+// keeps it up to date after each effective CREATE/DROP. The catalog itself
+// never touches the disk.
 //
-// Pointers returned by find() stay valid as long as the table is not removed
-// (std::map never moves its nodes).
+// Tables and views share one namespace. Pointers returned by find() stay valid
+// as long as the table is not removed (std::map never moves its nodes);
+// pointers returned by findView() are invalidated by any view change.
 class Catalog {
 public:
+    // ---- tables ------------------------------------------------------------
+
     [[nodiscard]] const TableSchema* find(std::string_view table) const noexcept;
     [[nodiscard]] bool contains(std::string_view table) const noexcept { return find(table) != nullptr; }
 
-    Result<void> add(TableSchema schema);          // AlreadyExists
+    Result<void> add(TableSchema schema);          // AlreadyExists (table or view)
     Result<void> remove(std::string_view table);   // NotFound
 
     [[nodiscard]] std::vector<std::string_view> tableNames() const;  // sorted
     [[nodiscard]] std::size_t size() const noexcept { return tables_.size(); }
 
+    // ---- views -------------------------------------------------------------
+
+    [[nodiscard]] const ViewEntry* findView(std::string_view view) const noexcept;
+
+    // `source` is the table or view the SELECT reads from; the caller (the
+    // binder) has already parsed and validated the definition.
+    Result<void> addView(ViewDef def, std::string source);  // AlreadyExists (table or view)
+    Result<void> removeView(std::string_view view);         // NotFound
+
+    // Creation order, which is also a valid load order (a view is always
+    // created after what it reads from).
+    [[nodiscard]] std::vector<ViewDef> views() const;
+    [[nodiscard]] std::vector<std::string_view> viewNames() const;
+
+    // Names of the views that read directly from `name` (table or view).
+    [[nodiscard]] std::vector<std::string_view> dependents(std::string_view name) const;
+
+    // True if `name` is a table or a view.
+    [[nodiscard]] bool hasName(std::string_view name) const noexcept {
+        return contains(name) || findView(name) != nullptr;
+    }
+
 private:
     // std::less<>: find() by string_view without building a std::string.
     std::map<std::string, TableSchema, std::less<>> tables_;
+    std::vector<ViewEntry> views_;
 };
 
 }  // namespace ledger

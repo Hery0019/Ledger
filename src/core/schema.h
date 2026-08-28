@@ -37,4 +37,11 @@ struct TableSchema {
     }
 };
 
+// A view is a named, stored SELECT. Only its text is persisted; it is parsed
+// again whenever it is used. Views and tables share one namespace.
+struct ViewDef {
+    std::string name;  // lowercase
+    std::string sql;   // the SELECT, verbatim (no trailing `;`)
+};
+
 }  // namespace ledger

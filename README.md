@@ -10,6 +10,11 @@ meant for personal use afterwards.
 - `INSERT INTO t [(cols)] VALUES (...)` — one row per statement.
 - `SELECT * | cols FROM t [WHERE expr] [ORDER BY col [ASC|DESC]] [LIMIT n]`.
 - `UPDATE t SET col = expr, ... [WHERE expr]`, `DELETE FROM t [WHERE expr]`.
+- `CREATE VIEW v AS SELECT cols FROM t [WHERE expr]` / `DROP VIEW v` — a view is
+  a stored projection + filter over a table or another view; it can be
+  queried like a table (with its own WHERE / ORDER BY / LIMIT) and is
+  read-only. `ORDER BY` and `LIMIT` are not allowed inside a view definition.
+  Dropping a table or view that another view reads from is refused.
 - Expressions: `+ - * /`, comparisons, `AND OR NOT`, `IS [NOT] NULL`,
   SQL three-valued logic. Case-insensitive identifiers.
 - No joins, indexes or transactions.
@@ -68,6 +73,7 @@ One directory per database, one sub-directory per table:
 ```
 data/mydb/
   LOCK                 present while a process has the database open
+  views.txt            ledger-views 1   then  <view>\t<escaped SELECT>, one per line
   users/
     schema.txt         ledger-schema 1  then  <column> <TYPE> [PK|NN]
     rows.txt           ledger-rows 1    then  I <rowid>\t<fields>  or  D <rowid>

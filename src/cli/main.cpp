@@ -4,7 +4,7 @@
 // LEDGER_DATA_DIR); a path is used as is. See resolveDatabasePath.
 //
 //  - stdin is a terminal : REPL. A statement ends with `;` (multi-line),
-//                          commands `.quit`, `.tables`, `.schema <table>`.
+//                          commands `.quit`, `.tables`, `.views`, `.schema <name>`.
 //  - stdin is redirected : script mode. All of stdin is read, every statement
 //                          is run; stops at the first error (exit code 1).
 //
@@ -78,10 +78,15 @@ bool dotCommand(Database& db, const std::string& line, bool& quit) {
         quit = true;
     } else if (cmd == ".tables") {
         for (const auto name : db.catalog().tableNames()) std::cout << name << '\n';
+    } else if (cmd == ".views") {
+        for (const auto name : db.catalog().viewNames()) std::cout << name << '\n';
     } else if (cmd == ".schema") {
         const TableSchema* t = arg.empty() ? nullptr : db.catalog().find(arg);
-        if (!t) {
-            std::cerr << "error: unknown table '" << arg << "'\n";
+        const ViewEntry* v = arg.empty() ? nullptr : db.catalog().findView(arg);
+        if (v) {
+            std::cout << "CREATE VIEW " << v->def.name << " AS " << v->def.sql << ";\n";
+        } else if (!t) {
+            std::cerr << "error: unknown table or view '" << arg << "'\n";
         } else {
             std::cout << "CREATE TABLE " << t->name << " (";
             for (std::size_t i = 0; i < t->columns.size(); ++i) {
@@ -95,7 +100,8 @@ bool dotCommand(Database& db, const std::string& line, bool& quit) {
         }
     } else if (cmd == ".help") {
         std::cout << ".tables          list tables\n"
-                     ".schema <table>  show a table's definition\n"
+                     ".views           list views\n"
+                     ".schema <name>   show a table's or a view's definition\n"
                      ".quit            exit\n";
     } else {
         std::cerr << "error: unknown command '" << cmd << "' (try .help)\n";

@@ -88,7 +88,7 @@ TEST_CASE("CREATE TABLE constraints in any order, each at most once") {
 }
 
 TEST_CASE("CREATE TABLE syntax errors") {
-    CHECK(errorOf("CREATE t (a INT)") == "1:8: expected 'TABLE', got identifier 't'");
+    CHECK(errorOf("CREATE t (a INT)") == "1:8: expected 'TABLE' or 'VIEW', got identifier 't'");
     CHECK(errorOf("CREATE TABLE t") == "1:15: expected '(', got 'end of input'");
     CHECK(errorOf("CREATE TABLE t ()") == "1:17: expected identifier, got ')'");
     CHECK(errorOf("CREATE TABLE t (a)") == "1:18: expected column type (INT, FLOAT, TEXT or BOOL), got ')'");
@@ -102,7 +102,7 @@ TEST_CASE("CREATE TABLE syntax errors") {
 
 TEST_CASE("DROP TABLE") {
     CHECK(parseAs<DropTable>("DROP TABLE Users;").table == "users");
-    CHECK(errorOf("DROP Users") == "1:6: expected 'TABLE', got identifier 'users'");
+    CHECK(errorOf("DROP Users") == "1:6: expected 'TABLE' or 'VIEW', got identifier 'users'");
     CHECK(errorOf("DROP TABLE") == "1:11: expected identifier, got 'end of input'");
 }
 

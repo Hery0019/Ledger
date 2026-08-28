@@ -14,7 +14,7 @@ struct KeywordEntry {
     TokenKind kind;
 };
 
-constexpr std::array<KeywordEntry, 30> kKeywords{{
+constexpr std::array<KeywordEntry, 32> kKeywords{{
     {"select", TokenKind::KwSelect},   {"from", TokenKind::KwFrom},
     {"where", TokenKind::KwWhere},     {"insert", TokenKind::KwInsert},
     {"into", TokenKind::KwInto},       {"values", TokenKind::KwValues},
@@ -30,6 +30,7 @@ constexpr std::array<KeywordEntry, 30> kKeywords{{
     {"int", TokenKind::KwInt},         {"float", TokenKind::KwFloat},
     {"text", TokenKind::KwText},       {"bool", TokenKind::KwBool},
     {"primary", TokenKind::KwPrimary}, {"key", TokenKind::KwKey},
+    {"view", TokenKind::KwView},       {"as", TokenKind::KwAs},
 }};
 
 // Explicit ASCII classification: we don't want to depend on the locale, and
@@ -56,10 +57,12 @@ public:
         for (;;) {
             skipSpaceAndComments();
             if (atEnd()) {
-                out.push_back(Token{TokenKind::End, {}, line_, column_});
+                out.push_back(Token{TokenKind::End, {}, line_, column_, pos_});
                 return out;
             }
+            const std::size_t start = pos_;
             LEDGER_TRY(tok, next());
+            tok.offset = start;
             out.push_back(std::move(tok));
         }
     }
@@ -258,6 +261,8 @@ std::string_view tokenKindName(TokenKind kind) noexcept {
         case TokenKind::KwBool:     return "BOOL";
         case TokenKind::KwPrimary:  return "PRIMARY";
         case TokenKind::KwKey:      return "KEY";
+        case TokenKind::KwView:     return "VIEW";
+        case TokenKind::KwAs:       return "AS";
         case TokenKind::Identifier: return "identifier";
         case TokenKind::Integer:    return "integer";
         case TokenKind::Float:      return "float";

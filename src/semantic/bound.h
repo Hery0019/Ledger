@@ -97,7 +97,17 @@ struct BoundDelete {
     BoundExprPtr where;
 };
 
-using BoundStatement = std::variant<BoundCreateTable, BoundDropTable, BoundInsert, BoundSelect,
-                                    BoundUpdate, BoundDelete>;
+struct BoundCreateView {
+    ViewDef def;         // validated: the SELECT binds against the current catalog
+    std::string source;  // table or view it reads from
+};
+
+struct BoundDropView {
+    std::string name;
+};
+
+using BoundStatement = std::variant<BoundCreateTable, BoundDropTable, BoundCreateView,
+                                    BoundDropView, BoundInsert, BoundSelect, BoundUpdate,
+                                    BoundDelete>;
 
 }  // namespace ledger

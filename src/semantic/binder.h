@@ -32,6 +32,14 @@ namespace ledger {
 //    inserted). No Text <-> number conversion.
 //  - every sub-expression without a column is folded to a constant (a data
 //    error, e.g. 1/0, is then reported at bind time).
+//
+// Views: `SELECT ... FROM v` is expanded at bind time. The view's own SELECT is
+// parsed again, its source resolved recursively (a view may read from a
+// view), and the result is a BoundSelect on the underlying table whose WHERE
+// is the conjunction of every filter along the way and whose visible columns
+// are the view's projection. Views are read-only: INSERT/UPDATE/DELETE on a
+// view is a SyntaxError. DROP TABLE / DROP VIEW is a ConstraintViolation while
+// a view still reads from the target.
 Result<BoundStatement> bind(const ast::Statement& stmt, const Catalog& catalog);
 
 }  // namespace ledger

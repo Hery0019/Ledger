@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <utility>
 
+#include "sql/parser.h"
+
 namespace ledger {
 
 // ---- Database --------------------------------------------------------------
@@ -12,6 +14,22 @@ Result<std::unique_ptr<Database>> Database::open(const std::filesystem::path& di
     std::unique_ptr<Database> db(new Database(std::move(engine)));
     LEDGER_TRY(schemas, db->engine_->loadSchemas());
     for (auto& s : schemas) LEDGER_TRY_VOID(db->catalog_.add(std::move(s)));
+    // Views are stored in creation order, so each one's source already exists
+    // when it is registered. A definition that no longer parses is a
+    // corrupted views file, not a user error.
+    LEDGER_TRY(views, db->engine_->loadViews());
+    for (auto& v : views) {
+        auto parsed = parse(v.sql);
+        const auto* query = parsed.ok() ? std::get_if<ast::Select>(&parsed.value()) : nullptr;
+        if (!query) {
+            return makeError(ErrorCode::Corruption,
+                             "views.txt: view '" + v.name + "': " +
+                                 (parsed.ok() ? std::string("definition is not a SELECT")
+                                              : parsed.error().message));
+        }
+        std::string source = query->table;
+        LEDGER_TRY_VOID(db->catalog_.addView(std::move(v), std::move(source)));
+    }
     return db;
 }
 
