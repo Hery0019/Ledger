@@ -265,7 +265,21 @@ struct DropUser {
     std::string name;
 };
 
+// CREATE INDEX name ON table (column) / DROP INDEX name. One column per
+// index in v1; the index is always non-unique (uniqueness is a column
+// constraint, which carries its own index).
+struct CreateIndex {
+    std::string name;
+    std::string table;
+    std::string column;
+};
+
+struct DropIndex {
+    std::string name;
+};
+
 using Statement = std::variant<CreateTable, DropTable, CreateView, DropView, Insert, Select, Update,
-                               Delete, Begin, Commit, Rollback, CreateUser, AlterUser, DropUser>;
+                               Delete, Begin, Commit, Rollback, CreateUser, AlterUser, DropUser,
+                               CreateIndex, DropIndex>;
 
 }  // namespace ledger::ast

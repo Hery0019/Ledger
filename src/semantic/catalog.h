@@ -82,11 +82,26 @@ public:
     [[nodiscard]] std::vector<std::string_view> userNames() const; // sorted
     [[nodiscard]] bool hasUsers() const noexcept { return !users_.empty(); }
 
+    // ---- user indexes --------------------------------------------------------
+    //
+    // Declarations only (the entries live in the engine); their own
+    // namespace, creation order preserved (it is also the display order).
+
+    [[nodiscard]] const IndexDef* findIndex(std::string_view name) const noexcept;
+
+    Result<void> addIndex(IndexDef def);              // AlreadyExists (name taken)
+    Result<void> removeIndex(std::string_view name);  // NotFound
+
+    [[nodiscard]] std::vector<IndexDef> indexes() const { return indexes_; }
+    // The indexes declared on one table (for DROP TABLE and display).
+    [[nodiscard]] std::vector<IndexDef> indexesOn(std::string_view table) const;
+
 private:
     // std::less<>: find() by string_view without building a std::string.
     std::map<std::string, TableSchema, std::less<>> tables_;
     std::vector<ViewEntry> views_;
     std::map<std::string, UserDef, std::less<>> users_;
+    std::vector<IndexDef> indexes_;
 };
 
 }  // namespace ledger
