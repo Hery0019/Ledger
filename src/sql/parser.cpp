@@ -114,7 +114,8 @@ private:
         if (at(TokenKind::KwView)) return createView();
         if (at(TokenKind::KwTable)) return createTable();
         if (at(TokenKind::KwUser)) return createUser();
-        return unexpected("'TABLE', 'VIEW' or 'USER'");
+        if (at(TokenKind::KwIndex)) return createIndex();
+        return unexpected("'TABLE', 'VIEW', 'USER' or 'INDEX'");
     }
 
     Result<Statement> drop() {
@@ -122,7 +123,32 @@ private:
         if (at(TokenKind::KwView)) return dropView();
         if (at(TokenKind::KwTable)) return dropTable();
         if (at(TokenKind::KwUser)) return dropUser();
-        return unexpected("'TABLE', 'VIEW' or 'USER'");
+        if (at(TokenKind::KwIndex)) return dropIndex();
+        return unexpected("'TABLE', 'VIEW', 'USER' or 'INDEX'");
+    }
+
+    // ---- indexes -------------------------------------------------------------
+
+    // CREATE INDEX name ON table ( column ) — one column in v1.
+    Result<Statement> createIndex() {
+        advance();  // INDEX
+        LEDGER_TRY(name, identifier());
+        LEDGER_TRY_VOID(expect(TokenKind::KwOn));
+        LEDGER_TRY(table, identifier());
+        LEDGER_TRY_VOID(expect(TokenKind::LParen));
+        LEDGER_TRY(column, identifier());
+        if (at(TokenKind::Comma)) {
+            return errorAt(peek(), "multi-column indexes are not supported");
+        }
+        LEDGER_TRY_VOID(expect(TokenKind::RParen));
+        return Statement{CreateIndex{std::move(name), std::move(table), std::move(column)}};
+    }
+
+    // DROP INDEX name
+    Result<Statement> dropIndex() {
+        advance();  // INDEX
+        LEDGER_TRY(name, identifier());
+        return Statement{DropIndex{std::move(name)}};
     }
 
     // ---- users ---------------------------------------------------------------

@@ -79,6 +79,16 @@ public:
     // Only the salted hashes travel here; passwords never reach the engine.
     virtual Result<void> saveUsers(const std::vector<UserDef>& users) = 0;
     virtual Result<std::vector<UserDef>> loadUsers() = 0;
+
+    // User-declared indexes (CREATE INDEX). createIndex builds a non-unique
+    // in-memory index over the live rows (AlreadyExists if the column has
+    // one); dropIndex discards it. Only the declaration list is persisted
+    // (saveIndexes/loadIndexes, same shape as views); the entries are
+    // rebuilt whenever the rows are loaded.
+    virtual Result<void> createIndex(std::string_view table, std::size_t column) = 0;
+    virtual Result<void> dropIndex(std::string_view table, std::size_t column) = 0;
+    virtual Result<void> saveIndexes(const std::vector<IndexDef>& indexes) = 0;
+    virtual Result<std::vector<IndexDef>> loadIndexes() = 0;
 };
 
 }  // namespace ledger
