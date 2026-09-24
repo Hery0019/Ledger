@@ -98,12 +98,12 @@ public:
     }
     [[nodiscard]] bool has(std::size_t column) const noexcept { return on(column) != nullptr; }
 
-    // Declares an extra (non-unique) index; the caller fills it by re-adding
-    // the live rows. False if the column already has one.
-    bool addIndex(std::size_t column) {
-        if (has(column)) return false;
+    // Declares an extra (non-unique) index and returns it so the caller can
+    // fill it with the live rows. nullptr if the column already has one.
+    ColumnIndex* addIndex(std::size_t column) {
+        if (has(column)) return nullptr;
         indexes_.emplace_back(column, /*unique=*/false);
-        return true;
+        return &indexes_.back();
     }
     // Removes a non-unique index. False if there is none (schema-born unique
     // indexes are structural and never removed this way).

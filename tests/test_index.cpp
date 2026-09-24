@@ -1,9 +1,11 @@
 #include "doctest.h"
 
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
+#include "cli/database.h"
 #include "exec/executor.h"
 #include "storage/file_engine.h"
 #include "storage/memory_engine.h"
@@ -56,6 +58,10 @@ public:
     Result<std::vector<ViewDef>> loadViews() override { return inner_.loadViews(); }
     Result<void> saveUsers(const std::vector<UserDef>& u) override { return inner_.saveUsers(u); }
     Result<std::vector<UserDef>> loadUsers() override { return inner_.loadUsers(); }
+    Result<void> createIndex(std::string_view t, std::size_t c) override { return inner_.createIndex(t, c); }
+    Result<void> dropIndex(std::string_view t, std::size_t c) override { return inner_.dropIndex(t, c); }
+    Result<void> saveIndexes(const std::vector<IndexDef>& d) override { return inner_.saveIndexes(d); }
+    Result<std::vector<IndexDef>> loadIndexes() override { return inner_.loadIndexes(); }
 
 private:
     IStorageEngine& inner_;
@@ -228,4 +234,149 @@ TEST_CASE("the executor answers WHERE pk = value and PK uniqueness through the i
     // Rows stay consistent after the index-guided operations.
     CHECK(run("SELECT id FROM t ORDER BY id").rows.size() == 5);
     CHECK(run("SELECT id FROM t WHERE id = 10").rows.size() == 1);
+}
+
+// ---- CREATE INDEX / DROP INDEX -----------------------------------------------
+
+namespace {
+
+// Engine + catalog + executor, with the engine wrapped to count accesses.
+struct IndexFixture {
+    MemoryEngine inner;
+    CountingEngine engine{inner};
+    Catalog catalog;
+    Executor exec{engine, catalog};
+
+    Result<QueryResult> run(std::string_view sql) { return exec.execute(sql); }
+    QueryResult rows(std::string_view sql) {
+        auto r = run(sql);
+        REQUIRE_MESSAGE(r.ok(), "unexpected error: " << (r.ok() ? "" : r.error().message));
+        return std::move(r).value();
+    }
+};
+
+}  // namespace
+
+TEST_CASE("CREATE INDEX turns an equality scan into a lookup, duplicates included") {
+    IndexFixture f;
+    REQUIRE(f.run("CREATE TABLE t (id INT PRIMARY KEY, score INT)").ok());
+    for (int i = 1; i <= 6; ++i) {
+        REQUIRE(f.run("INSERT INTO t VALUES (" + std::to_string(i) + ", " + std::to_string(i % 3) + ")").ok());
+    }
+    // Without an index: a scan answers.
+    f.engine.scans = f.engine.lookups = 0;
+    CHECK(f.rows("SELECT id FROM t WHERE score = 1").rows.size() == 2);
+    CHECK(f.engine.scans == 1);
+    CHECK(f.engine.lookups == 0);
+
+    REQUIRE(f.run("CREATE INDEX idx_score ON t (score)").ok());
+    f.engine.scans = f.engine.lookups = 0;
+    const auto hits = f.rows("SELECT id FROM t WHERE score = 1 ORDER BY id");
+    REQUIRE(hits.rows.size() == 2);
+    CHECK(hits.rows[0][0].asInt() == 1);
+    CHECK(hits.rows[1][0].asInt() == 4);
+    CHECK(f.engine.scans == 0);
+    CHECK(f.engine.lookups == 1);
+
+    // Writes keep the index in step.
+    REQUIRE(f.run("INSERT INTO t VALUES (7, 1)").ok());
+    REQUIRE(f.run("UPDATE t SET score = 1 WHERE id = 2").ok());
+    REQUIRE(f.run("DELETE FROM t WHERE id = 4").ok());
+    f.engine.scans = f.engine.lookups = 0;
+    CHECK(f.rows("SELECT id FROM t WHERE score = 1").rows.size() == 3);  // 1, 2, 7
+    CHECK(f.engine.scans == 0);
+
+    // DROP INDEX goes back to scanning.
+    REQUIRE(f.run("DROP INDEX idx_score").ok());
+    f.engine.scans = f.engine.lookups = 0;
+    CHECK(f.rows("SELECT id FROM t WHERE score = 1").rows.size() == 3);
+    CHECK(f.engine.scans == 1);
+    CHECK(f.engine.lookups == 0);
+}
+
+TEST_CASE("CREATE INDEX / DROP INDEX validation") {
+    IndexFixture f;
+    REQUIRE(f.run("CREATE TABLE t (id INT PRIMARY KEY, tag TEXT UNIQUE, score INT)").ok());
+    REQUIRE(f.run("CREATE VIEW v AS SELECT score FROM t").ok());
+
+    CHECK(f.run("CREATE INDEX i ON missing (score)").error().code == ErrorCode::NotFound);
+    CHECK(f.run("CREATE INDEX i ON t (missing)").error().code == ErrorCode::NotFound);
+    CHECK(f.run("CREATE INDEX i ON v (score)").error().code == ErrorCode::SyntaxError);
+    CHECK(f.run("CREATE INDEX i ON t (id)").error().code == ErrorCode::AlreadyExists);   // PRIMARY KEY
+    CHECK(f.run("CREATE INDEX i ON t (tag)").error().code == ErrorCode::AlreadyExists);  // UNIQUE
+
+    REQUIRE(f.run("CREATE INDEX i ON t (score)").ok());
+    CHECK(f.run("CREATE INDEX i ON t (score)").error().code == ErrorCode::AlreadyExists);   // name taken
+    CHECK(f.run("CREATE INDEX i2 ON t (score)").error().code == ErrorCode::AlreadyExists);  // column taken
+    CHECK(f.run("DROP INDEX missing").error().code == ErrorCode::NotFound);
+
+    // Refused inside a transaction, like the other DDL.
+    REQUIRE(f.run("BEGIN").ok());
+    CHECK_FALSE(f.run("CREATE INDEX i3 ON t (score)").ok());
+    CHECK_FALSE(f.run("DROP INDEX i").ok());
+    REQUIRE(f.run("ROLLBACK").ok());
+
+    // Parse errors.
+    CHECK_FALSE(f.run("CREATE INDEX i ON t (a, b)").ok());  // multi-column
+    CHECK_FALSE(f.run("CREATE INDEX i ON t").ok());
+    CHECK_FALSE(f.run("CREATE INDEX ON t (a)").ok());
+}
+
+TEST_CASE("DROP TABLE takes its indexes along") {
+    IndexFixture f;
+    REQUIRE(f.run("CREATE TABLE t (id INT PRIMARY KEY, score INT)").ok());
+    REQUIRE(f.run("CREATE INDEX idx_score ON t (score)").ok());
+    REQUIRE(f.run("DROP TABLE t").ok());
+    CHECK(f.catalog.findIndex("idx_score") == nullptr);
+    CHECK(f.inner.loadIndexes().value().empty());
+    // The name is free again.
+    REQUIRE(f.run("CREATE TABLE t (id INT PRIMARY KEY, score INT)").ok());
+    CHECK(f.run("CREATE INDEX idx_score ON t (score)").ok());
+}
+
+TEST_CASE("user indexes survive a database reopen and are rebuilt from the rows") {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "ledger_test_index_persist";
+    fs::remove_all(dir);
+    {
+        auto db = Database::open(dir).value();
+        REQUIRE(db->execute("CREATE TABLE t (id INT PRIMARY KEY, score INT)").ok());
+        REQUIRE(db->execute("INSERT INTO t VALUES (1, 5)").ok());
+        REQUIRE(db->execute("INSERT INTO t VALUES (2, 5)").ok());
+        REQUIRE(db->execute("CREATE INDEX idx_score ON t (score)").ok());
+    }
+    {
+        auto db = Database::open(dir).value();
+        REQUIRE(db->catalog().findIndex("idx_score") != nullptr);
+        const auto r = db->execute("SELECT id FROM t WHERE score = 5");
+        REQUIRE(r.ok());
+        CHECK(r.value().rows.size() == 2);
+        REQUIRE(db->execute("DROP INDEX idx_score").ok());
+    }
+    {
+        auto db = Database::open(dir).value();
+        CHECK(db->catalog().indexes().empty());
+    }
+    fs::remove_all(dir);
+}
+
+TEST_CASE("a stale indexes.txt declaration is skipped with a warning") {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "ledger_test_index_stale";
+    fs::remove_all(dir);
+    {
+        auto db = Database::open(dir).value();
+        REQUIRE(db->execute("CREATE TABLE t (id INT PRIMARY KEY)").ok());
+    }
+    {
+        std::ofstream(dir / "indexes.txt") << "ledger-indexes 1\nghost\tgone\tscore\n";
+    }
+    {
+        auto db = Database::open(dir).value();
+        CHECK(db->catalog().indexes().empty());
+        const auto warnings = db->takeWarnings();
+        REQUIRE(warnings.size() == 1);
+        CHECK(warnings[0].find("ghost") != std::string::npos);
+    }
+    fs::remove_all(dir);
 }
