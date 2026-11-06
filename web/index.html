@@ -5,249 +5,437 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ledger SQL Playground</title>
 <meta name="description" content="Ledger, an embedded SQL engine in C++20, compiled to WebAssembly and running entirely in your browser.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
+  /* One Dark, the palette of the README screenshots (tools/ansi2svg.pl). */
   :root {
-    --bg: #f6f5f1;
-    --panel: #ffffff;
-    --ink: #1d1f23;
-    --muted: #686c75;
-    --line: #dddad2;
-    --accent: #2f6fde;
-    --accent-ink: #ffffff;
-    --code-bg: #fbfaf7;
-    --ok: #1f8a4c;
-    --err: #c2372f;
-    --err-bg: #fdf1f0;
-    --null: #a3a6ad;
-    --head: #f1efe9;
-    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
-    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --term: #282c34;
+    --term-bar: #21252b;
+    --term-edge: #181a1f;
+    --fg: #d7dae0;
+    --dim: #6b717d;
+    --title: #9da5b4;
+    --cyan: #56b6c2;
+    --green: #98c379;
+    --yellow: #e5c07b;
+    --red: #e06c75;
+    --blue: #61afef;
+    --dot-red: #ff5f57;
+    --dot-yellow: #febc2e;
+    --dot-green: #28c840;
+
+    --page: #e9ebef;
+    --page-ink: #2b2f36;
+    --page-muted: #646a75;
+    --page-link: #2f6fde;
+    --mono: "JetBrains Mono", "Cascadia Code", "Fira Code", Consolas, "DejaVu Sans Mono", monospace;
     color-scheme: light;
   }
   @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #121418;
-      --panel: #1a1d22;
-      --ink: #e6e7ea;
-      --muted: #9a9ea8;
-      --line: #2c3038;
-      --accent: #6b9cff;
-      --accent-ink: #0d1117;
-      --code-bg: #15171b;
-      --ok: #4cc27f;
-      --err: #ff7b72;
-      --err-bg: #2a1716;
-      --null: #5d626c;
-      --head: #20242a;
+    :root:not([data-theme="light"]) {
+      --page: #15171b;
+      --page-ink: #d7dae0;
+      --page-muted: #8b919c;
+      --page-link: #61afef;
       color-scheme: dark;
     }
   }
+  :root[data-theme="dark"] {
+    --page: #15171b;
+    --page-ink: #d7dae0;
+    --page-muted: #8b919c;
+    --page-link: #61afef;
+    color-scheme: dark;
+  }
+
   * { box-sizing: border-box; }
   body {
     margin: 0;
-    background: var(--bg);
-    color: var(--ink);
-    font: 15px/1.5 var(--sans);
+    background: var(--page);
+    color: var(--page-ink);
+    font: 14px/1.6 var(--mono);
+    font-variant-ligatures: none;
   }
-  .wrap { max-width: 980px; margin: 0 auto; padding: 32px 16px 64px; }
-  header h1 { margin: 0; font: 700 28px/1.2 var(--mono); letter-spacing: -0.5px; }
-  header p { margin: 8px 0 0; color: var(--muted); max-width: 680px; }
-  header a { color: var(--accent); }
-  .facts { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 0; padding: 0; list-style: none; }
-  .facts li {
-    font: 12px/1 var(--mono); padding: 6px 8px; border: 1px solid var(--line);
-    border-radius: 999px; color: var(--muted); background: var(--panel);
+  a { color: var(--page-link); }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 40px 16px 56px; }
+
+  .intro { margin: 0 0 22px; color: var(--page-muted); max-width: 720px; }
+  .intro strong { color: var(--page-ink); }
+
+  /* ---- terminal window ---------------------------------------------- */
+  .term {
+    background: var(--term);
+    color: var(--fg);
+    border-radius: 12px;
+    border: 1px solid var(--term-edge);
+    box-shadow: 0 24px 60px -20px rgba(0, 0, 0, .55), 0 2px 6px rgba(0, 0, 0, .25);
+    overflow: hidden;
   }
-  .examples { display: flex; flex-wrap: wrap; gap: 8px; margin: 28px 0 10px; align-items: center; }
-  .examples span { color: var(--muted); font-size: 13px; margin-right: 4px; }
-  button {
-    font: 500 13px/1 var(--sans); padding: 9px 12px; border-radius: 8px; cursor: pointer;
-    border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+  .titlebar {
+    position: relative;
+    display: flex; align-items: center; gap: 8px;
+    height: 40px; padding: 0 14px;
+    background: var(--term-bar);
+    border-bottom: 1px solid var(--term-edge);
   }
-  button:hover { border-color: var(--accent); }
-  button:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-  button:disabled { opacity: .5; cursor: default; }
-  .editor {
-    border: 1px solid var(--line); border-radius: 10px; background: var(--panel); overflow: hidden;
+  .dot { width: 12px; height: 12px; border-radius: 50%; flex: none; }
+  .dot.r { background: var(--dot-red); }
+  .dot.y { background: var(--dot-yellow); }
+  .dot.g { background: var(--dot-green); }
+  .titlebar .title {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    color: var(--title); font-size: 12px; white-space: nowrap;
   }
+
+  .tabs {
+    display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none;
+    padding: 8px 10px 0; background: var(--term-bar);
+    border-bottom: 1px solid var(--term-edge);
+  }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab {
+    flex: none; font: 12.5px var(--mono); color: var(--dim);
+    background: transparent; border: 1px solid transparent; border-bottom: 0;
+    border-radius: 8px 8px 0 0; padding: 7px 14px 8px; cursor: pointer;
+  }
+  .tab:hover { color: var(--fg); }
+  .tab[aria-selected="true"] {
+    color: var(--fg); background: var(--term); border-color: var(--term-edge);
+    margin-bottom: -1px;
+  }
+  .tab[aria-selected="true"]::before { content: "● "; color: var(--green); }
+
+  .screen {
+    padding: 18px 20px 6px;
+    max-height: 62vh; min-height: 280px;
+    overflow: auto;
+    scrollbar-color: #3e4451 transparent;
+  }
+  pre { margin: 0; font: inherit; white-space: pre; }
+  .banner {
+    font-size: clamp(6.5px, 2.25vw, 14px); line-height: 1.15; margin: 4px 0 14px;
+  }
+  .tagline { margin-bottom: 18px; }
+  .entry { margin-bottom: 14px; }
+  pre.grid { line-height: 1.3; }                  /* box drawing joins up */
+  pre.wrapped { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+  .ps { color: var(--green); }
+  .gt, .faint { color: var(--fg); opacity: .6; }
+  .sql { color: var(--cyan); }
+  .b { color: var(--dim); }                       /* box drawing */
+  .h { color: var(--cyan); font-weight: 700; }    /* column headers */
+  .n { color: var(--yellow); }                    /* numbers */
+  .null { color: var(--dim); font-style: italic; }
+  .t { color: var(--green); }
+  .f { color: var(--red); }
+  .err { color: var(--red); }
+  .err b { font-weight: 700; }
+  .warn { color: var(--yellow); }
+  .bold { font-weight: 700; }
+
+  /* ---- prompt ------------------------------------------------------- */
+  .input {
+    border-top: 1px solid #3a3f4b;
+    background: #2c313a;
+  }
+  .editor { display: flex; align-items: flex-start; padding: 12px 20px 4px; }
+  .editor .ps { flex: none; padding-top: 1px; white-space: pre; }
   textarea {
-    display: block; width: 100%; min-height: 240px; resize: vertical; border: 0; margin: 0;
-    padding: 14px 16px; background: var(--code-bg); color: var(--ink);
-    font: 13.5px/1.55 var(--mono); tab-size: 2;
+    flex: 1; min-width: 0; min-height: 132px; resize: vertical;
+    border: 0; margin: 0; padding: 1px 0 0; outline: none;
+    background: transparent; color: var(--cyan); caret-color: var(--fg);
+    font: inherit; line-height: 1.6; tab-size: 2; font-variant-ligatures: none;
   }
-  .bar {
-    display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 12px;
-    border-top: 1px solid var(--line);
+  textarea::selection { background: #3e4451; }
+  .controls {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    padding: 6px 16px 12px 20px;
   }
-  .bar .hint { color: var(--muted); font-size: 12.5px; margin-left: auto; }
-  kbd { font: 11.5px var(--mono); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
-  #status { font-size: 13px; color: var(--muted); }
-  #output { margin-top: 20px; display: grid; gap: 12px; }
-  .result {
-    border: 1px solid var(--line); border-radius: 10px; background: var(--panel); overflow: hidden;
+  .btn {
+    font: 600 12.5px var(--mono); padding: 7px 12px; border-radius: 6px; cursor: pointer;
+    background: transparent; color: var(--fg); border: 1px solid #4b5263;
   }
-  .result .meta {
-    display: flex; gap: 10px; align-items: baseline; padding: 8px 12px;
-    font: 12.5px var(--mono); color: var(--muted); border-bottom: 1px solid var(--line);
+  .btn:hover { border-color: var(--title); }
+  .btn.run { background: var(--green); border-color: var(--green); color: var(--term); }
+  .btn.run:hover { filter: brightness(1.08); }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn kbd { font: inherit; opacity: .7; margin-left: 6px; }
+  .tab:focus-visible, .btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  .editor:focus-within .ps { text-shadow: 0 0 8px rgba(152, 195, 121, .45); }
+  #status { color: var(--dim); font-size: 12.5px; margin-left: auto; }
+
+  /* ---- below the window --------------------------------------------- */
+  .notes {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 14px 28px; margin: 26px 0 0; padding: 0; list-style: none;
+    color: var(--page-muted); font-size: 12.5px;
   }
-  .result .meta b { color: var(--ink); font-weight: 600; }
-  .result.plain .meta { border-bottom: 0; }
-  .scroll { overflow-x: auto; }
-  table { border-collapse: collapse; font: 13px/1.4 var(--mono); width: max-content; min-width: 100%; }
-  th, td { padding: 6px 12px; border-bottom: 1px solid var(--line); text-align: left; white-space: pre; }
-  th { background: var(--head); font-weight: 600; }
-  tr:last-child td { border-bottom: 0; }
-  td.num { text-align: right; font-variant-numeric: tabular-nums; }
-  td.null { color: var(--null); font-style: italic; }
-  td.true { color: var(--ok); }
-  td.false { color: var(--err); }
-  .error { border-color: var(--err); background: var(--err-bg); }
-  .error .meta { color: var(--err); border-bottom: 0; }
-  .error .msg { padding: 0 12px 10px; font: 13px/1.5 var(--mono); white-space: pre-wrap; }
-  .note { color: var(--muted); font-size: 13px; margin-top: 28px; }
-  footer { margin-top: 40px; color: var(--muted); font-size: 13px; }
-  footer a { color: var(--accent); }
+  .notes b { display: block; color: var(--page-ink); margin-bottom: 2px; }
+  .notes code { color: var(--page-ink); }
+  footer { margin-top: 30px; color: var(--page-muted); font-size: 12.5px; }
+
   @media (max-width: 600px) {
-    .bar .hint { margin-left: 0; width: 100%; }
+    .wrap { padding-top: 24px; }
+    .screen { padding: 14px 14px 4px; max-height: 58vh; }
+    .editor { padding: 10px 14px 4px; }
+    .controls { padding: 6px 12px 12px 14px; }
+    #status { width: 100%; margin-left: 0; }
+    .titlebar .title {
+      position: static; transform: none; margin-left: 10px;
+      font-size: 11px; overflow: hidden; text-overflow: ellipsis;
+    }
+    textarea { min-height: 96px; }
   }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <header>
-    <h1>Ledger</h1>
-    <p>An embedded SQL engine written in C++20, compiled to WebAssembly. Everything below runs
-      inside this tab, on an in-memory database: no server, nothing sent, nothing stored.
-      <a href="https://github.com/Hery0019/Ledger">Source on GitHub</a>.</p>
-    <ul class="facts">
-      <li>C++20</li><li>WebAssembly</li><li>joins · aggregates · views</li>
-      <li>transactions</li><li>constraints &amp; foreign keys</li><li>subqueries</li>
-    </ul>
-  </header>
+  <p class="intro"><strong>Ledger</strong> is an embedded SQL engine written in C++20. This is the
+    real engine, compiled to WebAssembly and running inside this tab on an in-memory database:
+    no server, nothing sent, nothing stored. <a href="https://github.com/Hery0019/Ledger">Source on GitHub</a>.</p>
 
-  <div class="examples" id="examples">
-    <span>Examples:</span>
-  </div>
-
-  <div class="editor">
-    <textarea id="sql" wrap="off" spellcheck="false" autocomplete="off" aria-label="SQL statements"></textarea>
-    <div class="bar">
-      <button class="primary" id="run" disabled>Run</button>
-      <button id="reset" disabled>Reset database</button>
-      <span id="status">Loading the engine…</span>
-      <span class="hint"><kbd>Ctrl</kbd> + <kbd>Enter</kbd> to run · statements end with <code>;</code></span>
+  <section class="term" aria-label="Ledger SQL console">
+    <div class="titlebar">
+      <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      <span class="title">ledger — playground · WebAssembly</span>
     </div>
-  </div>
+    <div class="tabs" id="tabs" role="tablist" aria-label="Examples"></div>
 
-  <div id="output" aria-live="polite"></div>
+    <div class="screen" id="screen" aria-live="polite">
+      <pre class="banner" id="banner" aria-label="LEDGER"></pre>
+      <pre class="tagline"><span class="bold">  embedded SQL, plain-text storage</span><span class="faint">  ·  </span>:memory: <span class="faint">(in your browser)</span></pre>
+      <div id="log"></div>
+    </div>
 
-  <p class="note">Each run is one session, like a request to the <code>ledgerd</code> HTTP server:
-    statements run in order and stop at the first error, and a transaction must <code>BEGIN</code> and
-    <code>COMMIT</code> within the same run. Tables stay between runs until you reset. Picking an
-    example starts from an empty database.</p>
+    <div class="input">
+      <label class="editor">
+        <span class="ps">ledger<span class="gt">&gt; </span></span>
+        <textarea id="sql" wrap="off" spellcheck="false" autocomplete="off" aria-label="SQL statements"></textarea>
+      </label>
+      <div class="controls">
+        <button class="btn run" id="run" disabled>Run<kbd>⌃↵</kbd></button>
+        <button class="btn" id="clear" disabled>Clear screen</button>
+        <button class="btn" id="reset" disabled>Reset database</button>
+        <span id="status">loading the engine…</span>
+      </div>
+    </div>
+  </section>
+
+  <ul class="notes">
+    <li><b>One run, one session</b>Statements run in order and stop at the first error, like a
+      request to the <code>ledgerd</code> HTTP server.</li>
+    <li><b>Transactions</b><code>BEGIN</code> and <code>COMMIT</code> belong in the same run; a
+      transaction left open is rolled back.</li>
+    <li><b>State</b>Tables stay between runs until you reset. Each example starts from an empty
+      database.</li>
+  </ul>
 
   <footer>Ledger is a learning project by Hery RAKOTONARIVO, released under the MIT license.</footer>
 </div>
 
 <script type="module">
   const EXAMPLES = [
-    ["Getting started", "getting-started.sql"],
-    ["Joins & aggregates", "joins.sql"],
-    ["Views, CASE, subquery", "views.sql"],
-    ["Transaction rollback", "transaction.sql"],
-    ["Constraint error", "constraints.sql"],
+    ["getting started", "getting-started.sql"],
+    ["joins & aggregates", "joins.sql"],
+    ["views · CASE · subquery", "views.sql"],
+    ["transaction rollback", "transaction.sql"],
+    ["constraint error", "constraints.sql"],
+  ];
+
+  // The CLI banner ("ANSI Shadow"), one colour per line like the fancy style.
+  const BANNER = [
+    ["██╗     ███████╗██████╗  ██████╗ ███████╗██████╗ ", "#00ffff"],
+    ["██║     ██╔════╝██╔══██╗██╔════╝ ██╔════╝██╔══██╗", "#00d7ff"],
+    ["██║     █████╗  ██║  ██║██║  ███╗█████╗  ██████╔╝", "#00afff"],
+    ["██║     ██╔══╝  ██║  ██║██║   ██║██╔══╝  ██╔══██╗", "#0087ff"],
+    ["███████╗███████╗██████╔╝╚██████╔╝███████╗██║  ██║", "#005fff"],
+    ["╚══════╝╚══════╝╚═════╝  ╚═════╝ ╚══════╝╚═╝  ╚═╝", "#0000ff"],
   ];
 
   const $ = (id) => document.getElementById(id);
-  const sqlBox = $("sql"), out = $("output"), status = $("status");
-  const runBtn = $("run"), resetBtn = $("reset");
+  const sqlBox = $("sql"), log = $("log"), screen = $("screen"), status = $("status");
+  const runBtn = $("run"), clearBtn = $("clear"), resetBtn = $("reset");
   let engine = null;
 
-  function el(tag, attrs = {}, ...children) {
-    const node = document.createElement(tag);
-    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
-    for (const c of children) node.append(c);
-    return node;
-  }
+  // ---- tiny DOM helpers ---------------------------------------------------
+  const span = (cls, text) => { const s = document.createElement("span"); if (cls) s.className = cls; s.textContent = text; return s; };
+  const line = (...parts) => { const p = document.createElement("pre"); p.append(...parts); return p; };
+  const width = (s) => [...s].length;  // code points: é is one column
+  const pad = (s, w, right) => right ? " ".repeat(w - width(s)) + s : s + " ".repeat(w - width(s));
 
-  function cell(value) {
-    if (value === null) return el("td", { class: "null" }, "NULL");
-    if (typeof value === "number") return el("td", { class: "num" }, String(value));
-    if (typeof value === "boolean") return el("td", { class: String(value) }, String(value));
-    return el("td", {}, String(value));
-  }
+  $("banner").append(...BANNER.map(([text, color]) => {
+    const s = span("", text + "\n"); s.style.color = color; return s;
+  }));
 
-  function renderResult(r, index) {
-    const n = el("b", {}, `#${index + 1}`);
-    if (r.kind === "select") {
-      const count = r.rows.length;
-      const box = el("div", { class: "result" },
-        el("div", { class: "meta" }, n, `${count} row${count === 1 ? "" : "s"}`));
-      const head = el("tr", {}, ...r.columns.map((c) => el("th", {}, c)));
-      const body = r.rows.map((row) => el("tr", {}, ...row.map(cell)));
-      box.append(el("div", { class: "scroll" }, el("table", {}, el("thead", {}, head), el("tbody", {}, ...body))));
-      return box;
+  // ---- statement splitting (same rules as splitStatements in database.cpp)
+  // Splits on ';' outside '...' strings and -- comments; returns the text of
+  // each non-empty statement, without its ';'.
+  function splitStatements(text) {
+    const out = [];
+    let cur = "", useful = false, inStr = false, inComment = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (inComment) { cur += c; if (c === "\n") inComment = false; continue; }
+      if (inStr) { cur += c; if (c === "'") inStr = false; continue; }
+      if (c === "-" && text[i + 1] === "-") { inComment = true; cur += c; continue; }
+      if (c === "'") { inStr = true; useful = true; cur += c; continue; }
+      if (c === ";") { if (useful) out.push(clean(cur)); cur = ""; useful = false; continue; }
+      if (!/\s/.test(c)) useful = true;
+      cur += c;
     }
-    const text = r.kind === "dml"
-      ? `${r.affected} row${r.affected === 1 ? "" : "s"} affected${r.key !== undefined ? ` (key ${r.key})` : ""}`
-      : "ok";
-    return el("div", { class: "result plain" }, el("div", { class: "meta" }, n, text));
+    if (useful) out.push(clean(cur));
+    return out;
+  }
+  // Drops leading blank and comment-only lines, and trailing whitespace.
+  function clean(s) {
+    const lines = s.split("\n");
+    while (lines.length && /^\s*(--.*)?$/.test(lines[0])) lines.shift();
+    return lines.join("\n").replace(/\s+$/, "");
   }
 
+  // ---- rendering, mirroring formatTable / formatSummary (fancy style) ------
+  function echo(sql) {
+    const rows = sql.split("\n");
+    const p = line(span("ps", "ledger"), span("gt", "> "));
+    rows.forEach((r, i) => {
+      if (i) p.append("\n" + "        ");
+      p.append(span("sql", i ? r : r.trimStart()));
+    });
+    p.append(span("", ";"));
+    return p;
+  }
+
+  function cellText(v) {
+    if (v === null) return "NULL";
+    return String(v);
+  }
+  function cellClass(v) {
+    if (v === null) return "null";
+    if (typeof v === "number") return "n";
+    if (typeof v === "boolean") return v ? "t" : "f";
+    return "";
+  }
+
+  function table(r) {
+    const cols = r.columns;
+    const w = cols.map((c, i) => Math.max(width(c), ...r.rows.map((row) => width(cellText(row[i])))));
+    const rule = (l, m, rt) => span("b", l + w.map((n) => "─".repeat(n + 2)).join(m) + rt + "\n");
+    const p = line();
+    p.className = "grid";
+    p.append(rule("╭", "┬", "╮"));
+    p.append(span("b", "│"));
+    cols.forEach((c, i) => { p.append(" ", span("h", c), " ".repeat(w[i] - width(c) + 1), span("b", "│")); });
+    p.append("\n", rule("├", "┼", "┤"));
+    for (const row of r.rows) {
+      p.append(span("b", "│"));
+      row.forEach((v, i) => {
+        const t = cellText(v), right = typeof v === "number";
+        const padded = pad(t, w[i], right);
+        const lead = right ? padded.slice(0, padded.length - t.length) : "";
+        const trail = right ? "" : padded.slice(t.length);
+        p.append(" " + lead, span(cellClass(v), t), trail + " ", span("b", "│"));
+      });
+      p.append("\n");
+    }
+    p.append(rule("╰", "┴", "╯"));
+    const n = r.rows.length;
+    p.append(span("faint", `${n} row${n === 1 ? "" : "s"}`));
+    return p;
+  }
+
+  function summary(r) {
+    if (r.kind === "select") return table(r);
+    if (r.kind === "dml") {
+      const key = r.key !== undefined ? ` (key ${r.key})` : "";
+      return line(span("faint", `${r.affected} row${r.affected === 1 ? "" : "s"} affected${key}`));
+    }
+    return line(span("faint", "ok"));
+  }
+
+  function entry(...nodes) {
+    const d = document.createElement("div");
+    d.className = "entry";
+    d.append(...nodes);
+    log.append(d);
+  }
+
+  // ---- actions ------------------------------------------------------------
   function run() {
     if (!engine) return;
-    const sql = sqlBox.value;
+    const text = sqlBox.value;
+    const statements = splitStatements(text);
     const t0 = performance.now();
     let reply;
     try {
-      reply = JSON.parse(engine.query(sql));
+      reply = JSON.parse(engine.query(text));
     } catch (e) {
       reply = { error: { code: "Internal", message: String(e) }, results: [] };
     }
     const ms = (performance.now() - t0).toFixed(1);
-    out.replaceChildren();
     const results = reply.results || [];
-    results.forEach((r, i) => out.append(renderResult(r, i)));
+
+    results.forEach((r, i) => entry(echo(statements[i] ?? ""), summary(r)));
     if (reply.error) {
       const e = reply.error;
+      const failed = statements[results.length];
       const where = e.line ? ` at line ${e.line}` : "";
-      out.append(el("div", { class: "result error" },
-        el("div", { class: "meta" }, el("b", {}, `#${results.length + 1}`), `error [${e.code}]${where}`),
-        el("div", { class: "msg" }, e.message)));
+      const msg = line(span("err", "error "), span("err bold", `[${e.code}]`), span("err", `${where}: ${e.message}`));
+      msg.className = "wrapped";
+      if (failed !== undefined && e.code !== "TransactionOpen") entry(echo(failed), msg);
+      else entry(msg);
     }
     for (const w of reply.warnings || []) {
-      out.append(el("div", { class: "result plain" }, el("div", { class: "meta" }, "warning: " + w)));
+      const p = line(span("warn", "warning: " + w));
+      p.className = "wrapped";
+      entry(p);
     }
+
     const ran = results.length + (reply.error ? 1 : 0);
-    status.textContent = `${ran} statement${ran === 1 ? "" : "s"} in ${ms} ms`;
+    status.textContent = `${ran} statement${ran === 1 ? "" : "s"} · ${ms} ms`;
+    screen.scrollTop = screen.scrollHeight;
   }
 
-  function reset(message = "Database reset") {
+  function clearScreen() { log.replaceChildren(); }
+
+  function reset(message = "database reset") {
     if (!engine) return;
     engine.reset();
-    out.replaceChildren();
+    clearScreen();
+    entry(line(span("faint", "-- " + message)));
     status.textContent = message;
   }
 
-  async function loadExample(file) {
+  const tabs = $("tabs");
+  async function loadExample(index) {
+    const [label, file] = EXAMPLES[index];
+    for (const t of tabs.children) t.setAttribute("aria-selected", String(t.dataset.i === String(index)));
     const res = await fetch(`examples/${file}`);
-    sqlBox.value = await res.text();
-    reset("Fresh database");
+    sqlBox.value = (await res.text()).replace(/\s+$/, "");
+    reset(`fresh database · ${label}`);
     run();
   }
 
-  const bar = $("examples");
-  for (const [label, file] of EXAMPLES) {
-    const b = el("button", { type: "button" }, label);
-    b.addEventListener("click", () => loadExample(file));
-    bar.append(b);
-  }
+  EXAMPLES.forEach(([label], i) => {
+    const b = document.createElement("button");
+    b.className = "tab"; b.type = "button"; b.role = "tab"; b.dataset.i = String(i);
+    b.setAttribute("aria-selected", "false");
+    b.textContent = label;
+    b.addEventListener("click", () => loadExample(i));
+    tabs.append(b);
+  });
 
   runBtn.addEventListener("click", run);
+  clearBtn.addEventListener("click", clearScreen);
   resetBtn.addEventListener("click", () => reset());
   sqlBox.addEventListener("keydown", (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); run(); }
+    if (e.ctrlKey && (e.key === "l" || e.key === "L")) { e.preventDefault(); clearScreen(); }
+  });
+  sqlBox.addEventListener("input", () => {
+    for (const t of tabs.children) t.setAttribute("aria-selected", "false");
   });
 
   try {
@@ -257,11 +445,11 @@
       query: mod.cwrap("ledger_query", "string", ["string"]),
       reset: mod.cwrap("ledger_reset", null, []),
     };
-    runBtn.disabled = resetBtn.disabled = false;
-    status.textContent = "Engine ready";
-    await loadExample(EXAMPLES[0][1]);
+    runBtn.disabled = clearBtn.disabled = resetBtn.disabled = false;
+    await loadExample(0);
   } catch (e) {
-    status.textContent = "Could not load the engine: " + e.message;
+    entry(line(span("err", "could not load the engine: " + e.message)));
+    status.textContent = "engine failed to load";
   }
 </script>
 </body>
