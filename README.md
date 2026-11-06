@@ -3,7 +3,7 @@
 An embedded SQL engine in C++20 with plain-text storage. A learning project,
 meant for personal use afterwards.
 
-**[Try it in your browser](https://hery0019.github.io/Ledger/)**: the engine
+**[Try it in your browser](https://ledger.byhery.com/)**: the engine
 compiled to WebAssembly, on an in-memory database. Nothing is sent or stored.
 
 ![Getting started: the banner, CREATE TABLE, INSERT and a styled SELECT](docs/getting-started.svg)
