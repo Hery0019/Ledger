@@ -3,6 +3,9 @@
 An embedded SQL engine in C++20 with plain-text storage. A learning project,
 meant for personal use afterwards.
 
+**[Try it in your browser](https://hery0019.github.io/Ledger/)**: the engine
+compiled to WebAssembly, on an in-memory database. Nothing is sent or stored.
+
 ![Getting started: the banner, CREATE TABLE, INSERT and a styled SELECT](docs/getting-started.svg)
 
 ## Scope (v1)
@@ -85,6 +88,23 @@ cmake -S . -B build-san -G Ninja \
   -DCMAKE_CXX_FLAGS="-fsanitize=undefined -fsanitize-undefined-trap-on-error"
 cmake --build build-san && ./build-san/ledger_tests
 ```
+
+### WebAssembly playground
+
+`web/` is a static page that runs the engine in the browser. Under
+Emscripten, CMake builds only the engine and `src/web/wasm.cpp`, which exposes
+`ledger_query` (same JSON as `POST /query`), `ledger_status` and `ledger_reset`
+over an in-memory database (`Database::openInMemory`, backed by `MemoryEngine`):
+
+```sh
+emcmake cmake -S . -B build-wasm -DCMAKE_BUILD_TYPE=Release
+cmake --build build-wasm
+cp build-wasm/ledger.js build-wasm/ledger.wasm web/
+python3 -m http.server -d web     # then open http://localhost:8000
+```
+
+The `Playground` workflow runs the tests, does this build and publishes `web/`
+to GitHub Pages on every push to `main`.
 
 ## Usage
 

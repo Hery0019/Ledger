@@ -71,6 +71,27 @@ add_library(ledger_server
 )
 target_link_libraries(ledger_server PUBLIC ledger_cli)
 
+# ---- WebAssembly demo (emcmake) ---------------------------------------------
+# Under Emscripten only the engine and the browser entry point are built: no
+# sockets, no CLI, no tests. `emcmake cmake -S . -B build-wasm -G Ninja
+# -DCMAKE_BUILD_TYPE=Release && cmake --build build-wasm` writes ledger.js +
+# ledger.wasm, which web/index.html loads.
+if(EMSCRIPTEN)
+  add_executable(ledger_wasm src/web/wasm.cpp)
+  target_link_libraries(ledger_wasm PRIVATE ledger_server)
+  set_target_properties(ledger_wasm PROPERTIES OUTPUT_NAME ledger SUFFIX ".js")
+  target_link_options(ledger_wasm PRIVATE
+    -sENVIRONMENT=web
+    -sMODULARIZE=1
+    -sEXPORT_ES6=1
+    -sEXPORT_NAME=createLedger
+    -sALLOW_MEMORY_GROWTH=1
+    -sEXPORTED_FUNCTIONS=_ledger_query,_ledger_status,_ledger_reset
+    -sEXPORTED_RUNTIME_METHODS=cwrap
+  )
+  return()
+endif()
+
 # cpp-httplib (used through src/server/http.h): a system include so the
 # project's -Werror does not apply to the vendored header; sockets need
 # threads everywhere and winsock on Windows.

@@ -9,31 +9,43 @@
 #include "core/result.h"
 #include "exec/executor.h"
 #include "semantic/catalog.h"
+#include "storage/engine.h"
 #include "storage/file_engine.h"
 
 namespace ledger {
 
-// Assembles FileEngine + Catalog + Executor over a directory. This is the
-// object the CLI manipulates; main.cpp only does input/output.
+// Assembles a storage engine + Catalog + Executor. This is the object the CLI
+// manipulates; main.cpp only does input/output. `open` puts a FileEngine
+// over a directory; `openInMemory` uses a MemoryEngine instead (nothing
+// touches the disk, everything is lost with the object), which is what the
+// WebAssembly demo runs on.
 class Database {
 public:
     // Opens (or creates) the database and loads the schemas into the catalog.
     static Result<std::unique_ptr<Database>> open(const std::filesystem::path& dir);
 
+    // Empty database held entirely in memory. `directory()` is ":memory:".
+    static std::unique_ptr<Database> openInMemory();
+
     Result<QueryResult> execute(std::string_view sql) { return executor_.execute(sql); }
 
     [[nodiscard]] const Catalog& catalog() const noexcept { return catalog_; }
     [[nodiscard]] bool inTransaction() const noexcept { return executor_.inTransaction(); }
-    [[nodiscard]] const std::filesystem::path& directory() const noexcept { return engine_->directory(); }
+    [[nodiscard]] const std::filesystem::path& directory() const noexcept { return dir_; }
 
-    // Engine warnings (dropped truncated lines...), cleared on call.
-    std::vector<std::string> takeWarnings() { return engine_->takeWarnings(); }
+    // Engine warnings (dropped truncated lines...), cleared on call. Always
+    // empty in memory.
+    std::vector<std::string> takeWarnings() {
+        return file_ ? file_->takeWarnings() : std::vector<std::string>{};
+    }
 
 private:
-    explicit Database(std::unique_ptr<FileEngine> engine)
-        : engine_(std::move(engine)), executor_(*engine_, catalog_) {}
+    Database(std::unique_ptr<IStorageEngine> engine, FileEngine* file, std::filesystem::path dir)
+        : engine_(std::move(engine)), file_(file), dir_(std::move(dir)), executor_(*engine_, catalog_) {}
 
-    std::unique_ptr<FileEngine> engine_;
+    std::unique_ptr<IStorageEngine> engine_;
+    FileEngine* file_ = nullptr;  // engine_ when it is a FileEngine, else null
+    std::filesystem::path dir_;
     Catalog catalog_;
     Executor executor_;
 };

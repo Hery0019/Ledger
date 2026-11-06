@@ -14,6 +14,7 @@
 #endif
 
 #include "sql/parser.h"
+#include "storage/memory_engine.h"
 
 namespace ledger {
 
@@ -21,7 +22,9 @@ namespace ledger {
 
 Result<std::unique_ptr<Database>> Database::open(const std::filesystem::path& dir) {
     LEDGER_TRY(engine, FileEngine::open(dir));
-    std::unique_ptr<Database> db(new Database(std::move(engine)));
+    FileEngine* file = engine.get();
+    std::filesystem::path directory = file->directory();
+    std::unique_ptr<Database> db(new Database(std::move(engine), file, std::move(directory)));
     LEDGER_TRY(schemas, db->engine_->loadSchemas());
     for (auto& s : schemas) LEDGER_TRY_VOID(db->catalog_.add(std::move(s)));
     // Views are stored in creation order, so each one's source already exists
@@ -46,6 +49,11 @@ Result<std::unique_ptr<Database>> Database::open(const std::filesystem::path& di
     LEDGER_TRY(indexes, db->engine_->loadIndexes());
     for (auto& i : indexes) LEDGER_TRY_VOID(db->catalog_.addIndex(std::move(i)));
     return db;
+}
+
+std::unique_ptr<Database> Database::openInMemory() {
+    // A fresh MemoryEngine has no schema, view, user or index to load.
+    return std::unique_ptr<Database>(new Database(std::make_unique<MemoryEngine>(), nullptr, ":memory:"));
 }
 
 std::filesystem::path resolveDatabasePath(std::string_view arg, const char* envRoot,

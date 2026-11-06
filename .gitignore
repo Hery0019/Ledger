@@ -2,3 +2,6 @@ CLAUDE.md
 build/
 build-san/
 data/
+build-wasm/
+web/ledger.js
+web/ledger.wasm

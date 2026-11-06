@@ -96,3 +96,22 @@ TEST_CASE("handleQuery: an error inside a transaction rolls it back") {
     const auto check = handleQuery(*t.db, "SELECT COUNT(*) AS n FROM t;");
     CHECK(contains(check.body, R"("rows":[[0]])"));
 }
+
+TEST_CASE("handleQuery: an in-memory database works without touching the disk") {
+    auto db = Database::openInMemory();
+    CHECK(db->directory() == fs::path(":memory:"));
+    auto reply = handleQuery(*db,
+                             "CREATE TABLE t (id INT PRIMARY KEY AUTOINCREMENT, name TEXT);"
+                             "INSERT INTO t (name) VALUES ('a');"
+                             "SELECT * FROM t;");
+    CHECK(reply.status == 200);
+    CHECK(contains(reply.body, R"({"kind":"select","columns":["id","name"],"rows":[[1,"a"]]})"));
+    CHECK(db->takeWarnings().empty());
+
+    // State survives between requests; an open transaction is rolled back.
+    reply = handleQuery(*db, "BEGIN; INSERT INTO t (name) VALUES ('b');");
+    CHECK(reply.status == 400);
+    CHECK(contains(reply.body, "TransactionOpen"));
+    reply = handleQuery(*db, "SELECT COUNT(*) AS n FROM t;");
+    CHECK(contains(reply.body, R"("rows":[[1]])"));
+}
